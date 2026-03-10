@@ -43,8 +43,6 @@ export default function ARPage() {
   const [arMode, setArMode] = useState<ARMode>('checking');
   const arModeRef = useRef<ARMode>('checking');
   const modelLoadedRef = useRef(false);
-  const [locked, setLocked] = useState(false);
-  const [arPlaced, setArPlaced] = useState(false); // true once model is placed in AR
 
   useEffect(() => {
     detectARMode().then((mode) => {
@@ -84,35 +82,19 @@ export default function ARPage() {
     }
     function onARStatus(e: Event) {
       const status = (e as CustomEvent<{ status: string }>).detail?.status;
-      if (status === 'session-started') {
-        setScreen('ar-active');
-        setArPlaced(false);
-        setLocked(false);
-      }
-      if (status === 'not-presenting') {
-        setScreen('ar-ended');
-        setArPlaced(false);
-        setLocked(false);
-      }
+      if (status === 'session-started') setScreen('ar-active');
+      if (status === 'not-presenting') setScreen('ar-ended');
       if (status === 'failed') setScreen('ready');
-    }
-    // Fired when user taps to place the model on a surface
-    function onARTrackingChange(e: Event) {
-      const tracking = (e as CustomEvent<{ status: string }>).detail?.status;
-      // 'tracking' means placed and stable
-      if (tracking === 'tracking') setArPlaced(true);
     }
 
     mv.addEventListener('load', onLoad);
     mv.addEventListener('error', onError);
     mv.addEventListener('ar-status', onARStatus);
-    mv.addEventListener('ar-tracking', onARTrackingChange);
     return () => {
       clearTimeout(timeout);
       mv.removeEventListener('load', onLoad);
       mv.removeEventListener('error', onError);
       mv.removeEventListener('ar-status', onARStatus);
-      mv.removeEventListener('ar-tracking', onARTrackingChange);
     };
   }, []);
 
@@ -120,26 +102,6 @@ export default function ARPage() {
     const mv = mvRef.current as any;
     mv?.activateAR?.();
   }, []);
-
-  // Toggle lock — when locked, disable AR hit-test so model stays put
-  // When unlocked, re-enable so user can drag it to a new position
-  const toggleLock = useCallback(() => {
-    const mv = mvRef.current as any;
-    if (!mv) return;
-    const next = !locked;
-    setLocked(next);
-    if (next) {
-      // Lock: disable interaction so model is frozen in place
-      mv.setAttribute('interaction-prompt', 'none');
-      // Remove the ar attribute briefly and re-add — freezes position
-      // Actually: setting touch-action none on the mv stops repositioning
-      mv.style.touchAction = 'none';
-      mv.style.pointerEvents = 'none';
-    } else {
-      mv.style.touchAction = '';
-      mv.style.pointerEvents = 'auto';
-    }
-  }, [locked]);
 
   const modeLabel: Record<ARMode, string> = {
     webxr: 'WebXR · ARCore',
@@ -160,14 +122,6 @@ export default function ARPage() {
         background: '#080808',
       }}
     >
-      {/*
-        Key fixes for floating bug:
-        - ar-placement="floor" (not wall)
-        - NO scale="fixed" — let it auto-scale to surface
-        - xr-environment enables proper ground shadow/occlusion
-        - The floating is usually caused by the model's pivot not being
-          at its base. model-viewer compensates with floor placement.
-      */}
       <MV
         ref={mvRef}
         src='/model.glb'
@@ -176,12 +130,11 @@ export default function ARPage() {
         ar-modes='webxr scene-viewer quick-look'
         ar-scale='auto'
         ar-placement='floor'
-        xr-environment
         camera-controls
         auto-rotate
         rotation-per-second='20deg'
-        shadow-intensity='2'
-        shadow-softness='1'
+        shadow-intensity='1'
+        shadow-softness='0.8'
         exposure='1.1'
         environment-image='neutral'
         interaction-prompt='none'
@@ -200,7 +153,6 @@ export default function ARPage() {
         }}
       />
 
-      {/* ── LOADING ── */}
       {screen === 'loading' && (
         <div
           style={{
@@ -240,7 +192,6 @@ export default function ARPage() {
         </div>
       )}
 
-      {/* ── READY (3D preview + launch button) ── */}
       {screen === 'ready' && (
         <div
           style={{
@@ -333,145 +284,60 @@ export default function ARPage() {
                 marginTop: 10,
               }}
             >
-              Drag to orbit · Pinch to zoom · Two fingers to pan
+              Point your camera at a flat surface to place the object
             </p>
           </div>
         </div>
       )}
 
-      {/* ── AR ACTIVE — overlay controls ── */}
       {screen === 'ar-active' && (
         <div
           style={{
             position: 'absolute',
-            inset: 0,
+            bottom: 44,
+            left: 0,
+            right: 0,
             zIndex: 30,
+            display: 'flex',
+            justifyContent: 'center',
             pointerEvents: 'none',
           }}
         >
-          {/* Top status bar */}
           <div
             style={{
-              position: 'absolute',
-              top: 20,
-              left: 0,
-              right: 0,
+              padding: '8px 18px',
+              borderRadius: 100,
+              background: 'rgba(0,0,0,0.55)',
+              border: '1px solid rgba(0,255,136,0.4)',
+              backdropFilter: 'blur(10px)',
               display: 'flex',
-              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 8,
             }}
           >
-            <div
+            <span
               style={{
-                padding: '6px 14px',
-                borderRadius: 100,
-                background: 'rgba(0,0,0,0.55)',
-                border: `1px solid ${locked ? 'rgba(255,200,0,0.5)' : 'rgba(0,255,136,0.4)'}`,
-                backdropFilter: 'blur(10px)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background: '#00ff88',
+                display: 'inline-block',
+                animation: 'breathe 1.5s ease-in-out infinite',
+              }}
+            />
+            <span
+              style={{
+                color: 'rgba(255,255,255,0.7)',
+                fontSize: 12,
+                fontFamily: 'monospace',
               }}
             >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: locked ? '#ffc800' : '#00ff88',
-                  display: 'inline-block',
-                  animation: 'breathe 1.5s ease-in-out infinite',
-                }}
-              />
-              <span
-                style={{
-                  color: 'rgba(255,255,255,0.7)',
-                  fontSize: 11,
-                  fontFamily: 'monospace',
-                }}
-              >
-                {locked
-                  ? 'Model locked in place'
-                  : arPlaced
-                    ? 'Drag to reposition'
-                    : 'Tap a surface to place'}
-              </span>
-            </div>
+              AR active · scan a flat surface
+            </span>
           </div>
-
-          {/* Bottom controls — only show after model is placed */}
-          {arPlaced && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                padding: '20px 20px 44px',
-                background:
-                  'linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent)',
-                pointerEvents: 'all',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: 12,
-              }}
-            >
-              {/* Orbit hint */}
-              <p
-                style={{
-                  color: 'rgba(255,255,255,0.25)',
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  letterSpacing: '0.06em',
-                }}
-              >
-                {locked ? 'UNLOCK TO MOVE' : 'DRAG TO ORBIT · PINCH TO SCALE'}
-              </p>
-
-              {/* Controls row */}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                {/* Lock / Unlock button */}
-                <button
-                  onClick={toggleLock}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '12px 22px',
-                    borderRadius: 14,
-                    border: `1.5px solid ${locked ? 'rgba(255,200,0,0.5)' : 'rgba(255,255,255,0.2)'}`,
-                    background: locked
-                      ? 'rgba(255,200,0,0.12)'
-                      : 'rgba(255,255,255,0.08)',
-                    backdropFilter: 'blur(16px)',
-                    color: locked ? '#ffc800' : 'rgba(255,255,255,0.8)',
-                    fontSize: 14,
-                    fontWeight: 600,
-                    fontFamily: 'system-ui, sans-serif',
-                    cursor: 'pointer',
-                    WebkitTapHighlightColor: 'transparent',
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  {locked ? (
-                    <>
-                      <LockIcon />
-                      Unlock
-                    </>
-                  ) : (
-                    <>
-                      <UnlockIcon />
-                      Lock in place
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
-      {/* ── AR ENDED ── */}
       {screen === 'ar-ended' && (
         <div
           style={{
@@ -503,7 +369,6 @@ export default function ARPage() {
         </div>
       )}
 
-      {/* ── UNSUPPORTED ── */}
       {screen === 'unsupported' && (
         <div
           style={{
@@ -593,7 +458,6 @@ export default function ARPage() {
         </div>
       )}
 
-      {/* ── ERROR ── */}
       {screen === 'error' && (
         <div
           style={{
@@ -631,8 +495,6 @@ export default function ARPage() {
     </div>
   );
 }
-
-// ── Sub-components ──────────────────────────────────────────────────────────
 
 function Spinner() {
   return (
@@ -692,7 +554,7 @@ function ARButton({
         WebkitTapHighlightColor: 'transparent',
         boxShadow:
           '0 0 32px rgba(0,255,136,0.12), inset 0 1px 0 rgba(255,255,255,0.08)',
-        transition: 'transform 0.12s',
+        transition: 'transform 0.12s, box-shadow 0.2s',
       }}
       onTouchStart={(e) => {
         e.currentTarget.style.transform = 'scale(0.97)';
@@ -720,37 +582,5 @@ function ARButton({
       </svg>
       {label}
     </button>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg
-      width='16'
-      height='16'
-      viewBox='0 0 24 24'
-      fill='none'
-      stroke='currentColor'
-      strokeWidth='2'
-    >
-      <rect x='3' y='11' width='18' height='11' rx='2' ry='2' />
-      <path d='M7 11V7a5 5 0 0 1 10 0v4' />
-    </svg>
-  );
-}
-
-function UnlockIcon() {
-  return (
-    <svg
-      width='16'
-      height='16'
-      viewBox='0 0 24 24'
-      fill='none'
-      stroke='currentColor'
-      strokeWidth='2'
-    >
-      <rect x='3' y='11' width='18' height='11' rx='2' ry='2' />
-      <path d='M7 11V7a5 5 0 0 1 9.9-1' />
-    </svg>
   );
 }
