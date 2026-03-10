@@ -11,10 +11,11 @@ type Screen =
   | 'unsupported'
   | 'error';
 
-const DEFAULT_MODEL_SCALE = 0.05;
-const MIN_MODEL_SCALE = 0.02;
-const MAX_MODEL_SCALE = 1.2;
-const SCALE_STEP = 0.02;
+const DEFAULT_MODEL_SCALE = 1;
+const MIN_MODEL_SCALE = 0.2;
+const MAX_MODEL_SCALE = 3;
+const SCALE_STEP = 0.1;
+const AR_MODEL_SRC = '/model-ar.glb';
 
 async function detectARMode(): Promise<ARMode> {
   const ua = navigator.userAgent;
@@ -34,6 +35,18 @@ async function detectARMode(): Promise<ARMode> {
     } catch {}
   }
   return 'none';
+}
+
+function buildSceneViewerUrl(fileUrl: string, title: string, linkUrl: string) {
+  const params = new URLSearchParams({
+    file: fileUrl,
+    mode: 'ar_only',
+    title,
+    resizable: 'false',
+    'disable_occlusion': 'true',
+    link: linkUrl,
+  });
+  return `https://arvr.google.com/scene-viewer/1.0?${params.toString()}`;
 }
 
 export default function ARPage() {
@@ -140,6 +153,16 @@ export default function ARPage() {
     const mv = mvRef.current as any;
     const overlay = overlayRef.current;
     if (!mv || !overlay) return;
+    if (arModeRef.current === 'scene-viewer') {
+      const modelUrl = new URL(AR_MODEL_SRC, window.location.href).toString();
+      const sceneViewerUrl = buildSceneViewerUrl(
+        modelUrl,
+        'Bracelet',
+        window.location.href,
+      );
+      window.location.assign(sceneViewerUrl);
+      return;
+    }
     const xr = (navigator as any).xr;
     if (arModeRef.current === 'webxr' && xr) {
       try {
@@ -221,9 +244,9 @@ export default function ARPage() {
         background: '#080808',
       }}
     >
-      <MV
-        ref={mvRef}
-        src='/model.glb'
+    <MV
+      ref={mvRef}
+      src={AR_MODEL_SRC}
         alt='AR Model'
         ar
         ar-modes={arModesAttr}
@@ -699,103 +722,13 @@ export default function ARPage() {
               }}
             >
               {arMode === 'webxr'
-                ? 'Tap AR, then tap once to place the bracelet.'
+                ? 'Tap View in Your Space, then tap once to place.'
                 : arMode === 'scene-viewer'
-                  ? 'Tap AR to open Google Scene Viewer, then place the bracelet.'
+                  ? 'Tap View in Your Space to open camera AR directly.'
                   : arMode === 'quick-look'
-                    ? 'Tap AR to open Apple Quick Look, then place the bracelet.'
+                    ? 'Tap View in Your Space to open Apple AR directly.'
                     : 'AR is not available on this device.'}
             </p>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                width: '100%',
-                maxWidth: 320,
-                marginBottom: 16,
-              }}
-            >
-              <span
-                style={{
-                  color: 'rgba(255,255,255,0.45)',
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  width: 72,
-                  flexShrink: 0,
-                }}
-              >
-                Size
-              </span>
-              <button
-                onTouchEnd={(e) => {
-                  e.stopPropagation();
-                  changeScale(-SCALE_STEP);
-                }}
-                onClick={() => changeScale(-SCALE_STEP)}
-                style={smBtn}
-              >
-                <svg
-                  width='14'
-                  height='14'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='3'
-                >
-                  <line x1='5' y1='12' x2='19' y2='12' />
-                </svg>
-              </button>
-              <div
-                style={{
-                  flex: 1,
-                  height: 4,
-                  background: 'rgba(255,255,255,0.15)',
-                  borderRadius: 4,
-                  overflow: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    height: '100%',
-                    width: `${Math.max(
-                      0,
-                      Math.min(
-                        100,
-                        ((scale - MIN_MODEL_SCALE) /
-                          (MAX_MODEL_SCALE - MIN_MODEL_SCALE)) *
-                          100,
-                      ),
-                    )}%`,
-                    background: '#00ff88',
-                    borderRadius: 4,
-                    transition: 'width 0.1s',
-                  }}
-                />
-              </div>
-              <button
-                onTouchEnd={(e) => {
-                  e.stopPropagation();
-                  changeScale(SCALE_STEP);
-                }}
-                onClick={() => changeScale(SCALE_STEP)}
-                style={smBtn}
-              >
-                <svg
-                  width='14'
-                  height='14'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='3'
-                >
-                  <line x1='12' y1='5' x2='12' y2='19' />
-                  <line x1='5' y1='12' x2='19' y2='12' />
-                </svg>
-              </button>
-            </div>
             <ARButton onClick={activateAR} />
             <p
               style={{
@@ -806,8 +739,8 @@ export default function ARPage() {
                 textAlign: 'center',
               }}
             >
-              If the bracelet still looks too big or too small, adjust Size and
-              open AR again.
+              If it is not visible instantly, move the phone a little and tap
+              once.
             </p>
           </div>
         </div>
@@ -1042,7 +975,7 @@ function Spinner() {
 
 function ARButton({
   onClick,
-  label = 'View in Augmented Reality',
+  label = 'View in Your Space',
 }: {
   onClick: () => void;
   label?: string;
