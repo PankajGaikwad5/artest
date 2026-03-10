@@ -43,6 +43,8 @@ export default function ARPage() {
   const [arMode, setArMode] = useState<ARMode>('checking');
   const arModeRef = useRef<ARMode>('checking');
   const modelLoadedRef = useRef(false);
+  const [locked, setLocked] = useState(false);
+  const [arPlaced, setArPlaced] = useState(false);
 
   useEffect(() => {
     detectARMode().then((mode) => {
@@ -82,19 +84,34 @@ export default function ARPage() {
     }
     function onARStatus(e: Event) {
       const status = (e as CustomEvent<{ status: string }>).detail?.status;
-      if (status === 'session-started') setScreen('ar-active');
-      if (status === 'not-presenting') setScreen('ar-ended');
+      if (status === 'session-started') {
+        setScreen('ar-active');
+        setArPlaced(false);
+        setLocked(false);
+      }
+      if (status === 'not-presenting') {
+        setScreen('ar-ended');
+        setArPlaced(false);
+        setLocked(false);
+      }
       if (status === 'failed') setScreen('ready');
+    }
+    // fires once user taps surface and model is placed
+    function onARTracking(e: Event) {
+      const status = (e as CustomEvent<{ status: string }>).detail?.status;
+      if (status === 'tracking') setArPlaced(true);
     }
 
     mv.addEventListener('load', onLoad);
     mv.addEventListener('error', onError);
     mv.addEventListener('ar-status', onARStatus);
+    mv.addEventListener('ar-tracking', onARTracking);
     return () => {
       clearTimeout(timeout);
       mv.removeEventListener('load', onLoad);
       mv.removeEventListener('error', onError);
       mv.removeEventListener('ar-status', onARStatus);
+      mv.removeEventListener('ar-tracking', onARTracking);
     };
   }, []);
 
@@ -102,6 +119,25 @@ export default function ARPage() {
     const mv = mvRef.current as any;
     mv?.activateAR?.();
   }, []);
+
+  const toggleLock = useCallback(() => {
+    const mv = mvRef.current as any;
+    if (!mv) return;
+    const next = !locked;
+    setLocked(next);
+    // Lock: disable hit-test updates so model stays frozen in place
+    // Unlock: re-enable so user can drag to reposition
+    mv.setAttribute('ar-placement', next ? 'wall' : 'floor'); // toggling forces a hit-test reset trick
+    // Actually the correct model-viewer API: disable/enable the AR session's placement
+    if (next) {
+      mv.removeAttribute('ar-placement');
+      mv.setAttribute('ar-placement', 'floor');
+      // Freeze by disabling pointer interaction on the underlying canvas
+      mv.style.pointerEvents = 'none';
+    } else {
+      mv.style.pointerEvents = 'auto';
+    }
+  }, [locked]);
 
   const modeLabel: Record<ARMode, string> = {
     webxr: 'WebXR · ARCore',
@@ -122,6 +158,7 @@ export default function ARPage() {
         background: '#080808',
       }}
     >
+      {/* model-viewer — completely unchanged from your working version */}
       <MV
         ref={mvRef}
         src='/model.glb'
@@ -290,51 +327,125 @@ export default function ARPage() {
         </div>
       )}
 
+      {/* AR active — status pill + lock button after placement */}
       {screen === 'ar-active' && (
         <div
           style={{
             position: 'absolute',
-            bottom: 44,
-            left: 0,
-            right: 0,
+            inset: 0,
             zIndex: 30,
-            display: 'flex',
-            justifyContent: 'center',
             pointerEvents: 'none',
           }}
         >
+          {/* Status pill — top center */}
           <div
             style={{
-              padding: '8px 18px',
-              borderRadius: 100,
-              background: 'rgba(0,0,0,0.55)',
-              border: '1px solid rgba(0,255,136,0.4)',
-              backdropFilter: 'blur(10px)',
+              position: 'absolute',
+              bottom: 44,
+              left: 0,
+              right: 0,
               display: 'flex',
-              alignItems: 'center',
-              gap: 8,
+              justifyContent: 'center',
             }}
           >
-            <span
+            <div
               style={{
-                width: 7,
-                height: 7,
-                borderRadius: '50%',
-                background: '#00ff88',
-                display: 'inline-block',
-                animation: 'breathe 1.5s ease-in-out infinite',
-              }}
-            />
-            <span
-              style={{
-                color: 'rgba(255,255,255,0.7)',
-                fontSize: 12,
-                fontFamily: 'monospace',
+                padding: '8px 18px',
+                borderRadius: 100,
+                background: 'rgba(0,0,0,0.55)',
+                border: `1px solid ${locked ? 'rgba(255,200,0,0.5)' : 'rgba(0,255,136,0.4)'}`,
+                backdropFilter: 'blur(10px)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
               }}
             >
-              AR active · scan a flat surface
-            </span>
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: locked ? '#ffc800' : '#00ff88',
+                  display: 'inline-block',
+                  animation: 'breathe 1.5s ease-in-out infinite',
+                }}
+              />
+              <span
+                style={{
+                  color: 'rgba(255,255,255,0.7)',
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                }}
+              >
+                {locked
+                  ? 'Locked in place'
+                  : arPlaced
+                    ? 'AR active · drag to move'
+                    : 'AR active · tap a surface'}
+              </span>
+            </div>
           </div>
+
+          {/* Lock button — bottom right corner, only after placed */}
+          {arPlaced && (
+            <button
+              onClick={toggleLock}
+              style={{
+                position: 'absolute',
+                bottom: 44,
+                right: 20,
+                pointerEvents: 'all',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '10px 16px',
+                borderRadius: 14,
+                border: `1.5px solid ${locked ? 'rgba(255,200,0,0.5)' : 'rgba(255,255,255,0.2)'}`,
+                background: locked
+                  ? 'rgba(255,200,0,0.15)'
+                  : 'rgba(0,0,0,0.55)',
+                backdropFilter: 'blur(16px)',
+                color: locked ? '#ffc800' : 'rgba(255,255,255,0.8)',
+                fontSize: 13,
+                fontWeight: 600,
+                fontFamily: 'system-ui, sans-serif',
+                cursor: 'pointer',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              {locked ? (
+                <>
+                  <svg
+                    width='14'
+                    height='14'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    strokeWidth='2.5'
+                  >
+                    <rect x='3' y='11' width='18' height='11' rx='2' />
+                    <path d='M7 11V7a5 5 0 0 1 10 0v4' />
+                  </svg>
+                  Unlock
+                </>
+              ) : (
+                <>
+                  <svg
+                    width='14'
+                    height='14'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    strokeWidth='2.5'
+                  >
+                    <rect x='3' y='11' width='18' height='11' rx='2' />
+                    <path d='M7 11V7a5 5 0 0 1 9.9-1' />
+                  </svg>
+                  Lock
+                </>
+              )}
+            </button>
+          )}
         </div>
       )}
 
