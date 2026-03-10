@@ -45,6 +45,8 @@ export default function ARPage() {
   const modelLoadedRef = useRef(false);
   const [locked, setLocked] = useState(false);
   const lockedRef = useRef(false);
+  const [scale, setScale] = useState(1);
+  const [rotation, setRotation] = useState(0);
 
   useEffect(() => {
     detectARMode().then((mode) => {
@@ -61,7 +63,6 @@ export default function ARPage() {
   useEffect(() => {
     const mv = mvRef.current;
     if (!mv) return;
-
     const timeout = setTimeout(() => {
       setScreen((prev) =>
         prev !== 'loading'
@@ -71,7 +72,6 @@ export default function ARPage() {
             : 'ready',
       );
     }, 12_000);
-
     function onLoad() {
       clearTimeout(timeout);
       modelLoadedRef.current = true;
@@ -88,15 +88,14 @@ export default function ARPage() {
         setScreen('ar-active');
         setLocked(false);
         lockedRef.current = false;
+        setScale(1);
+        setRotation(0);
       }
       if (status === 'not-presenting') {
         setScreen('ar-ended');
-        setLocked(false);
-        lockedRef.current = false;
       }
       if (status === 'failed') setScreen('ready');
     }
-
     mv.addEventListener('load', onLoad);
     mv.addEventListener('error', onError);
     mv.addEventListener('ar-status', onARStatus);
@@ -113,24 +112,37 @@ export default function ARPage() {
     mv?.activateAR?.();
   }, []);
 
-  // Lock/unlock by toggling the ar-placement attribute trick:
-  // model-viewer stops updating hit-test when we disable the slot
   const toggleLock = useCallback(() => {
-    const mv = mvRef.current as any;
-    if (!mv) return;
     const next = !lockedRef.current;
     lockedRef.current = next;
     setLocked(next);
-    // Disable/enable hit-test tracking by toggling the attribute
+    // When locked: remove ar-placement so model-viewer stops updating hit-test
+    // When unlocked: restore it so tapping repositions the model
+    const mv = mvRef.current as any;
+    if (!mv) return;
     if (next) {
-      mv.setAttribute('data-locked', 'true');
-      // Pause AR placement by removing ar-placement temporarily
-      mv.__locked_placement = mv.getAttribute('ar-placement');
       mv.removeAttribute('ar-placement');
     } else {
-      mv.removeAttribute('data-locked');
-      mv.setAttribute('ar-placement', mv.__locked_placement || 'floor');
+      mv.setAttribute('ar-placement', 'floor');
     }
+  }, []);
+
+  const changeScale = useCallback((delta: number) => {
+    setScale((prev) => {
+      const next = Math.min(3, Math.max(0.2, prev + delta));
+      const mv = mvRef.current as any;
+      if (mv) mv.setAttribute('scale', `${next} ${next} ${next}`);
+      return next;
+    });
+  }, []);
+
+  const changeRotation = useCallback((delta: number) => {
+    setRotation((prev) => {
+      const next = prev + delta;
+      const mv = mvRef.current as any;
+      if (mv) mv.setAttribute('orientation', `0deg ${next}deg 0deg`);
+      return next;
+    });
   }, []);
 
   const modeLabel: Record<ARMode, string> = {
@@ -175,190 +187,29 @@ export default function ARPage() {
           inset: 0,
           width: '100%',
           height: '100%',
-          opacity: screen === 'ar-active' ? 0 : 1,
+          // NEVER hide model-viewer — it must stay visible, AR compositor needs it
+          opacity: 1,
           transition: 'opacity 0.3s',
           pointerEvents:
-            screen === 'ready' || screen === 'ar-ended' ? 'auto' : 'none',
+            screen === 'ready' ||
+            screen === 'ar-ended' ||
+            screen === 'ar-active'
+              ? 'auto'
+              : 'none',
           '--poster-color': '#080808',
         }}
       >
-        {/*
-          model-viewer's AR overlay slot — anything here renders
-          INSIDE the WebXR session over the camera feed on Android.
-          This is the only way to show UI during an active AR session.
-          See: https://modelviewer.dev/docs/#entrydocs-augmentedreality-slots-ar-button
-        */}
+        {/* Hide model-viewer's own AR button — we use ours */}
         <div slot='ar-button' style={{ display: 'none' }} />
-
-        {/* This slot renders as an overlay inside the AR session */}
-        <div
-          slot='ar-prompt'
-          style={{
-            position: 'fixed',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            zIndex: 9999,
-            padding: '16px 20px 48px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 12,
-            background:
-              'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent)',
-            pointerEvents: 'all',
-          }}
-        >
-          {/* Instruction text */}
-          <p
-            style={{
-              color: 'rgba(255,255,255,0.55)',
-              fontSize: 12,
-              fontFamily: 'monospace',
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              marginBottom: 4,
-            }}
-          >
-            Tap surface to place · Drag to move
-          </p>
-
-          {/* Controls row */}
-          <div
-            style={{
-              display: 'flex',
-              gap: 10,
-              alignItems: 'center',
-              width: '100%',
-              maxWidth: 360,
-              justifyContent: 'center',
-            }}
-          >
-            {/* Lock / Unlock */}
-            <AROverlayButton
-              onClick={toggleLock}
-              accent={locked ? '#ffc800' : undefined}
-              icon={
-                locked ? (
-                  <svg
-                    width='18'
-                    height='18'
-                    viewBox='0 0 24 24'
-                    fill='none'
-                    stroke='currentColor'
-                    strokeWidth='2.2'
-                  >
-                    <rect x='3' y='11' width='18' height='11' rx='2' />
-                    <path d='M7 11V7a5 5 0 0 1 10 0v4' />
-                  </svg>
-                ) : (
-                  <svg
-                    width='18'
-                    height='18'
-                    viewBox='0 0 24 24'
-                    fill='none'
-                    stroke='currentColor'
-                    strokeWidth='2.2'
-                  >
-                    <rect x='3' y='11' width='18' height='11' rx='2' />
-                    <path d='M7 11V7a5 5 0 0 1 9.9-1' />
-                  </svg>
-                )
-              }
-              label={locked ? 'Unlock' : 'Lock'}
-            />
-
-            {/* Scale down */}
-            <AROverlayButton
-              onClick={() => {
-                const mv = mvRef.current as any;
-                if (!mv) return;
-                const cur =
-                  parseFloat(mv.getAttribute('scale') || '1 1 1') || 1;
-                const next = Math.max(0.1, cur - 0.15);
-                mv.setAttribute('scale', `${next} ${next} ${next}`);
-              }}
-              icon={
-                <svg
-                  width='18'
-                  height='18'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2.2'
-                >
-                  <circle cx='11' cy='11' r='8' />
-                  <line x1='21' y1='21' x2='16.65' y2='16.65' />
-                  <line x1='8' y1='11' x2='14' y2='11' />
-                </svg>
-              }
-              label='Smaller'
-            />
-
-            {/* Scale up */}
-            <AROverlayButton
-              onClick={() => {
-                const mv = mvRef.current as any;
-                if (!mv) return;
-                const cur =
-                  parseFloat(mv.getAttribute('scale') || '1 1 1') || 1;
-                const next = Math.min(5, cur + 0.15);
-                mv.setAttribute('scale', `${next} ${next} ${next}`);
-              }}
-              icon={
-                <svg
-                  width='18'
-                  height='18'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2.2'
-                >
-                  <circle cx='11' cy='11' r='8' />
-                  <line x1='21' y1='21' x2='16.65' y2='16.65' />
-                  <line x1='11' y1='8' x2='11' y2='14' />
-                  <line x1='8' y1='11' x2='14' y2='11' />
-                </svg>
-              }
-              label='Bigger'
-            />
-
-            {/* Rotate left */}
-            <AROverlayButton
-              onClick={() => {
-                const mv = mvRef.current as any;
-                if (!mv) return;
-                const cur = parseFloat(mv.getAttribute('data-rot') || '0');
-                const next = cur - 45;
-                mv.setAttribute('data-rot', String(next));
-                mv.setAttribute('orientation', `0deg ${next}deg 0deg`);
-              }}
-              icon={
-                <svg
-                  width='18'
-                  height='18'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2.2'
-                >
-                  <path d='M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8' />
-                  <path d='M3 3v5h5' />
-                </svg>
-              }
-              label='Rotate'
-            />
-          </div>
-        </div>
       </MV>
 
       {/* ── LOADING ── */}
       {screen === 'loading' && (
         <div
           style={{
-            position: 'absolute',
+            position: 'fixed',
             inset: 0,
-            zIndex: 20,
+            zIndex: 100,
             background: '#080808',
             display: 'flex',
             flexDirection: 'column',
@@ -396,9 +247,9 @@ export default function ARPage() {
       {screen === 'ready' && (
         <div
           style={{
-            position: 'absolute',
+            position: 'fixed',
             inset: 0,
-            zIndex: 10,
+            zIndex: 100,
             pointerEvents: 'none',
           }}
         >
@@ -491,15 +342,267 @@ export default function ARPage() {
         </div>
       )}
 
-      {/* ── AR ACTIVE — React overlay is hidden; controls live in slot above ── */}
+      {/* ── AR ACTIVE — fixed overlay over camera feed ── */}
+      {screen === 'ar-active' && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            pointerEvents: 'none', // container is pass-through
+          }}
+        >
+          {/* Top hint */}
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              padding: '52px 20px 20px',
+              display: 'flex',
+              justifyContent: 'center',
+              background:
+                'linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent)',
+              pointerEvents: 'none',
+            }}
+          >
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                padding: '7px 16px',
+                borderRadius: 100,
+                background: 'rgba(0,0,0,0.5)',
+                border: `1px solid ${locked ? 'rgba(255,200,0,0.5)' : 'rgba(255,255,255,0.15)'}`,
+                backdropFilter: 'blur(12px)',
+              }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: locked ? '#ffc800' : '#00ff88',
+                  display: 'inline-block',
+                  animation: 'breathe 2s ease-in-out infinite',
+                }}
+              />
+              <span
+                style={{
+                  color: 'rgba(255,255,255,0.7)',
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                }}
+              >
+                {locked
+                  ? 'Locked · move phone to orbit'
+                  : 'Tap surface to place · move phone to orbit'}
+              </span>
+            </div>
+          </div>
+
+          {/* Bottom toolbar */}
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              padding: '24px 20px 48px',
+              background:
+                'linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 60%, transparent)',
+              pointerEvents: 'all',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 16,
+            }}
+          >
+            {/* Scale slider row */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                width: '100%',
+                maxWidth: 320,
+              }}
+            >
+              <span
+                style={{
+                  color: 'rgba(255,255,255,0.4)',
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  width: 40,
+                  textAlign: 'right',
+                }}
+              >
+                SIZE
+              </span>
+              <button onClick={() => changeScale(-0.1)} style={iconBtnStyle}>
+                <svg
+                  width='16'
+                  height='16'
+                  viewBox='0 0 24 24'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2.5'
+                >
+                  <line x1='5' y1='12' x2='19' y2='12' />
+                </svg>
+              </button>
+              {/* Visual scale bar */}
+              <div
+                style={{
+                  flex: 1,
+                  height: 3,
+                  background: 'rgba(255,255,255,0.1)',
+                  borderRadius: 2,
+                  position: 'relative',
+                }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    height: '100%',
+                    width: `${((scale - 0.2) / 2.8) * 100}%`,
+                    background: '#00ff88',
+                    borderRadius: 2,
+                    transition: 'width 0.15s',
+                  }}
+                />
+              </div>
+              <button onClick={() => changeScale(0.1)} style={iconBtnStyle}>
+                <svg
+                  width='16'
+                  height='16'
+                  viewBox='0 0 24 24'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2.5'
+                >
+                  <line x1='12' y1='5' x2='12' y2='19' />
+                  <line x1='5' y1='12' x2='19' y2='12' />
+                </svg>
+              </button>
+            </div>
+
+            {/* Main controls row */}
+            <div
+              style={{
+                display: 'flex',
+                gap: 10,
+                alignItems: 'center',
+                width: '100%',
+                maxWidth: 320,
+                justifyContent: 'center',
+              }}
+            >
+              {/* Rotate left */}
+              <ToolButton onClick={() => changeRotation(-45)} label='↺ Rotate'>
+                <svg
+                  width='20'
+                  height='20'
+                  viewBox='0 0 24 24'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2'
+                >
+                  <path d='M2.5 2v6h6M2.66 15.57a10 10 0 1 0 .57-8.38' />
+                </svg>
+              </ToolButton>
+
+              {/* Lock / Unlock — center, bigger */}
+              <button
+                onClick={toggleLock}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 5,
+                  width: 72,
+                  height: 72,
+                  borderRadius: 20,
+                  border: `2px solid ${locked ? 'rgba(255,200,0,0.6)' : 'rgba(255,255,255,0.25)'}`,
+                  background: locked
+                    ? 'rgba(255,200,0,0.2)'
+                    : 'rgba(0,0,0,0.6)',
+                  backdropFilter: 'blur(20px)',
+                  color: locked ? '#ffc800' : 'rgba(255,255,255,0.9)',
+                  cursor: 'pointer',
+                  WebkitTapHighlightColor: 'transparent',
+                  transition: 'all 0.2s',
+                  flexShrink: 0,
+                }}
+              >
+                {locked ? (
+                  <svg
+                    width='22'
+                    height='22'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    strokeWidth='2'
+                  >
+                    <rect x='3' y='11' width='18' height='11' rx='2' />
+                    <path d='M7 11V7a5 5 0 0 1 10 0v4' />
+                  </svg>
+                ) : (
+                  <svg
+                    width='22'
+                    height='22'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    strokeWidth='2'
+                  >
+                    <rect x='3' y='11' width='18' height='11' rx='2' />
+                    <path d='M7 11V7a5 5 0 0 1 9.9-1' />
+                  </svg>
+                )}
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontFamily: 'system-ui',
+                    fontWeight: 700,
+                    letterSpacing: '0.05em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {locked ? 'Unlock' : 'Lock'}
+                </span>
+              </button>
+
+              {/* Rotate right */}
+              <ToolButton onClick={() => changeRotation(45)} label='Rotate ↻'>
+                <svg
+                  width='20'
+                  height='20'
+                  viewBox='0 0 24 24'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2'
+                >
+                  <path d='M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38' />
+                </svg>
+              </ToolButton>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── AR ENDED ── */}
       {screen === 'ar-ended' && (
         <div
           style={{
-            position: 'absolute',
+            position: 'fixed',
             inset: 0,
-            zIndex: 10,
+            zIndex: 100,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -529,9 +632,9 @@ export default function ARPage() {
       {screen === 'unsupported' && (
         <div
           style={{
-            position: 'absolute',
+            position: 'fixed',
             inset: 0,
-            zIndex: 20,
+            zIndex: 100,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -619,9 +722,9 @@ export default function ARPage() {
       {screen === 'error' && (
         <div
           style={{
-            position: 'absolute',
+            position: 'fixed',
             inset: 0,
-            zIndex: 20,
+            zIndex: 100,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -654,17 +757,31 @@ export default function ARPage() {
   );
 }
 
-// ── Reusable AR overlay button (renders inside WebXR session via slot) ──────
-function AROverlayButton({
+// ── Shared icon button style for scale controls ────────────────────────────
+const iconBtnStyle: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 10,
+  flexShrink: 0,
+  border: '1px solid rgba(255,255,255,0.15)',
+  background: 'rgba(0,0,0,0.55)',
+  backdropFilter: 'blur(12px)',
+  color: 'rgba(255,255,255,0.8)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer',
+  WebkitTapHighlightColor: 'transparent',
+};
+
+function ToolButton({
   onClick,
-  icon,
   label,
-  accent,
+  children,
 }: {
   onClick: () => void;
-  icon: React.ReactNode;
   label: string;
-  accent?: string;
+  children: React.ReactNode;
 }) {
   return (
     <button
@@ -673,27 +790,27 @@ function AROverlayButton({
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: 4,
-        padding: '12px 14px',
-        borderRadius: 16,
-        border: `1.5px solid ${accent ? `${accent}55` : 'rgba(255,255,255,0.18)'}`,
-        background: accent ? `${accent}18` : 'rgba(0,0,0,0.6)',
-        backdropFilter: 'blur(20px)',
-        color: accent || 'rgba(255,255,255,0.85)',
-        cursor: 'pointer',
-        WebkitTapHighlightColor: 'transparent',
-        minWidth: 64,
+        gap: 5,
+        padding: '12px 0',
         flex: 1,
         maxWidth: 80,
+        borderRadius: 16,
+        border: '1px solid rgba(255,255,255,0.15)',
+        background: 'rgba(0,0,0,0.55)',
+        backdropFilter: 'blur(16px)',
+        color: 'rgba(255,255,255,0.8)',
+        cursor: 'pointer',
+        WebkitTapHighlightColor: 'transparent',
       }}
     >
-      {icon}
+      {children}
       <span
         style={{
-          fontSize: 10,
-          fontFamily: 'system-ui, sans-serif',
+          fontSize: 9,
+          fontFamily: 'system-ui',
           fontWeight: 600,
-          letterSpacing: '0.03em',
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
         }}
       >
         {label}
