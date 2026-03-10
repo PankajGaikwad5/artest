@@ -37,18 +37,6 @@ async function detectARMode(): Promise<ARMode> {
   return 'none';
 }
 
-function buildSceneViewerUrl(fileUrl: string, title: string, linkUrl: string) {
-  const params = new URLSearchParams({
-    file: fileUrl,
-    mode: 'ar_only',
-    title,
-    resizable: 'false',
-    'disable_occlusion': 'true',
-    link: linkUrl,
-  });
-  return `https://arvr.google.com/scene-viewer/1.0?${params.toString()}`;
-}
-
 export default function ARPage() {
   const mvRef = useRef<HTMLElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -153,16 +141,6 @@ export default function ARPage() {
     const mv = mvRef.current as any;
     const overlay = overlayRef.current;
     if (!mv || !overlay) return;
-    if (arModeRef.current === 'scene-viewer') {
-      const modelUrl = new URL(AR_MODEL_SRC, window.location.href).toString();
-      const sceneViewerUrl = buildSceneViewerUrl(
-        modelUrl,
-        'Bracelet',
-        window.location.href,
-      );
-      window.location.assign(sceneViewerUrl);
-      return;
-    }
     const xr = (navigator as any).xr;
     if (arModeRef.current === 'webxr' && xr) {
       try {
@@ -244,13 +222,13 @@ export default function ARPage() {
         background: '#080808',
       }}
     >
-    <MV
-      ref={mvRef}
-      src={AR_MODEL_SRC}
+      <MV
+        ref={mvRef}
+        src={AR_MODEL_SRC}
         alt='AR Model'
         ar
         ar-modes={arModesAttr}
-        ar-scale='fixed'
+        ar-scale='auto'
         ar-placement='floor'
         scale={`${DEFAULT_MODEL_SCALE} ${DEFAULT_MODEL_SCALE} ${DEFAULT_MODEL_SCALE}`}
         camera-controls
@@ -724,7 +702,7 @@ export default function ARPage() {
               {arMode === 'webxr'
                 ? 'Tap View in Your Space, then tap once to place.'
                 : arMode === 'scene-viewer'
-                  ? 'Tap View in Your Space to open camera AR directly.'
+                  ? 'Tap View in Your Space. Pinch to resize after placement.'
                   : arMode === 'quick-look'
                     ? 'Tap View in Your Space to open Apple AR directly.'
                     : 'AR is not available on this device.'}
@@ -739,8 +717,7 @@ export default function ARPage() {
                 textAlign: 'center',
               }}
             >
-              If it is not visible instantly, move the phone a little and tap
-              once.
+              Keep this simple: tap the button and place once.
             </p>
           </div>
         </div>
