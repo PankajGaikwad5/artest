@@ -51,9 +51,6 @@ export default function ARPage() {
   const [rotation, setRotation] = useState(0);
   const scaleRef = useRef(1);
   const rotationRef = useRef(0);
-  // Store XR session so we can intercept select events
-  const xrSessionRef = useRef<any>(null);
-  const selectBlocker = useRef<((e: Event) => void) | null>(null);
 
   useEffect(() => {
     detectARMode().then((mode) => {
@@ -65,6 +62,20 @@ export default function ARPage() {
       }
       if (modelLoadedRef.current) setScreen('ready');
     });
+  }, []);
+
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    const onBeforeXRSelect = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      const touchedControl = Boolean(target?.closest('[data-ar-control]'));
+      if (lockedRef.current || touchedControl) e.preventDefault();
+    };
+    overlay.addEventListener('beforexrselect', onBeforeXRSelect);
+    return () => {
+      overlay.removeEventListener('beforexrselect', onBeforeXRSelect);
+    };
   }, []);
 
   useEffect(() => {
@@ -100,35 +111,14 @@ export default function ARPage() {
         scaleRef.current = 1;
         setRotation(0);
         rotationRef.current = 0;
-
-        // Grab the XRSession from model-viewer internals
-        // model-viewer stores it at mv[Symbol for xrSession] or via _currentSession
-        // We poll briefly to find it after session starts
-        let attempts = 0;
-        const poll = setInterval(() => {
-          attempts++;
-          const session = findXRSession(mv);
-          if (session) {
-            xrSessionRef.current = session;
-            clearInterval(poll);
-          }
-          if (attempts > 20) clearInterval(poll);
-        }, 200);
+        (mv as any).removeAttribute('disable-tap');
       }
       if (status === 'object-placed') {
         setIsPlaced(true);
       }
       if (status === 'not-presenting') {
         setScreen('ar-ended');
-        xrSessionRef.current = null;
-        // Clean up any blocker
-        if (selectBlocker.current && xrSessionRef.current) {
-          xrSessionRef.current.removeEventListener(
-            'select',
-            selectBlocker.current,
-          );
-          selectBlocker.current = null;
-        }
+        (mv as any).removeAttribute('disable-tap');
       }
       if (status === 'failed') setScreen('ready');
     }
@@ -172,29 +162,12 @@ export default function ARPage() {
     lockedRef.current = next;
     setLocked(next);
 
-    const session = xrSessionRef.current;
-    if (!session) return;
-
+    const mv = mvRef.current as any;
+    if (!mv) return;
     if (next) {
-      // The XRSession fires a 'select' event when user taps to reposition.
-      // Blocking it prevents model-viewer from moving the model.
-      const blocker = (e: Event) => {
-        e.stopImmediatePropagation();
-      };
-      selectBlocker.current = blocker;
-      // Add at capture phase with highest priority
-      session.addEventListener('select', blocker, { capture: true });
-      session.addEventListener('selectstart', blocker, { capture: true });
+      mv.setAttribute('disable-tap', '');
     } else {
-      if (selectBlocker.current) {
-        session.removeEventListener('select', selectBlocker.current, {
-          capture: true,
-        });
-        session.removeEventListener('selectstart', selectBlocker.current, {
-          capture: true,
-        });
-        selectBlocker.current = null;
-      }
+      mv.removeAttribute('disable-tap');
     }
   }, []);
 
@@ -239,11 +212,9 @@ export default function ARPage() {
         alt='AR Model'
         ar
         ar-modes='webxr'
-        ar-scale='auto'
+        ar-scale='fixed'
         ar-placement='floor'
         camera-controls
-        auto-rotate
-        rotation-per-second='20deg'
         shadow-intensity='1'
         shadow-softness='0.8'
         exposure='1.1'
@@ -278,19 +249,41 @@ export default function ARPage() {
         {/* Blocker for pan/zoom/rotate */}
         {locked && (
           <div
+            data-ar-control='true'
             style={{
               position: 'absolute',
               inset: 0,
               pointerEvents: 'all',
               zIndex: 0,
             }}
-            onTouchStart={(e) => e.stopPropagation()}
-            onTouchMove={(e) => e.stopPropagation()}
-            onTouchEnd={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            onPointerMove={(e) => e.stopPropagation()}
-            onPointerUp={(e) => e.stopPropagation()}
-            onWheel={(e) => e.stopPropagation()}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onTouchMove={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onPointerMove={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onPointerUp={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onWheel={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
           />
         )}
 
@@ -345,6 +338,7 @@ export default function ARPage() {
 
         {/* Bottom toolbar */}
         <div
+          data-ar-control='true'
           style={{
             position: 'relative',
             zIndex: 1,
@@ -858,32 +852,6 @@ export default function ARPage() {
       )}
     </div>
   );
-}
-
-// Find the XRSession buried in model-viewer's internal state
-function findXRSession(mv: any): any {
-  // model-viewer keeps the session at different paths depending on version
-  // Try common known paths
-  try {
-    if (mv._renderer?.xrSession) return mv._renderer.xrSession;
-    if (mv.xrSession) return mv.xrSession;
-    // Walk own properties looking for XRSession
-    for (const key of Object.getOwnPropertyNames(mv)) {
-      const val = mv[key];
-      if (
-        val &&
-        typeof val === 'object' &&
-        typeof val.addEventListener === 'function' &&
-        'inputSources' in val
-      ) {
-        return val; // This looks like an XRSession
-      }
-    }
-    // Check shadow root / internal elements
-    const internal = (mv as any)._internals || (mv as any).__internals;
-    if (internal?.xrSession) return internal.xrSession;
-  } catch {}
-  return null;
 }
 
 const smBtn: React.CSSProperties = {
