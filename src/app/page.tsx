@@ -44,6 +44,7 @@ export default function ARPage() {
   const [arMode, setArMode] = useState<ARMode>('checking');
   const arModeRef = useRef<ARMode>('checking');
   const modelLoadedRef = useRef(false);
+  const [isPlaced, setIsPlaced] = useState(false);
   const [locked, setLocked] = useState(false);
   const lockedRef = useRef(false);
   const [scale, setScale] = useState(1);
@@ -92,6 +93,7 @@ export default function ARPage() {
       const status = (e as CustomEvent<{ status: string }>).detail?.status;
       if (status === 'session-started') {
         setScreen('ar-active');
+        setIsPlaced(false);
         setLocked(false);
         lockedRef.current = false;
         setScale(1);
@@ -112,6 +114,9 @@ export default function ARPage() {
           }
           if (attempts > 20) clearInterval(poll);
         }, 200);
+      }
+      if (status === 'object-placed') {
+        setIsPlaced(true);
       }
       if (status === 'not-presenting') {
         setScreen('ar-ended');
@@ -331,7 +336,9 @@ export default function ARPage() {
             >
               {locked
                 ? 'Locked · move phone to orbit'
-                : 'Tap surface · move phone to orbit'}
+                : isPlaced
+                  ? 'Placed · drag to move'
+                  : 'Tap surface to anchor model'}
             </span>
           </div>
         </div>
@@ -345,7 +352,7 @@ export default function ARPage() {
             background:
               'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 65%, transparent)',
             pointerEvents: 'all',
-            display: 'flex',
+            display: isPlaced ? 'flex' : 'none',
             flexDirection: 'column',
             alignItems: 'center',
             gap: 14,
