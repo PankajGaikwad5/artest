@@ -237,7 +237,10 @@ export default function ARPage() {
         ar-scale='auto'
         ar-placement='floor'
         camera-controls
-        auto-rotate
+        auto-rotate={!locked ? true : undefined}
+        disable-pan={locked ? true : undefined}
+        disable-tap={locked ? true : undefined}
+        disable-zoom={locked ? true : undefined}
         rotation-per-second='20deg'
         shadow-intensity='1'
         shadow-softness='0.8'
