@@ -50,6 +50,9 @@ export default function ARPage() {
   const [rotation, setRotation] = useState(0);
   const scaleRef = useRef(1);
   const rotationRef = useRef(0);
+  // Store XR session so we can intercept select events
+  const xrSessionRef = useRef<any>(null);
+  const selectBlocker = useRef<((e: Event) => void) | null>(null);
 
   useEffect(() => {
     detectARMode().then((mode) => {
@@ -95,8 +98,33 @@ export default function ARPage() {
         scaleRef.current = 1;
         setRotation(0);
         rotationRef.current = 0;
+
+        // Grab the XRSession from model-viewer internals
+        // model-viewer stores it at mv[Symbol for xrSession] or via _currentSession
+        // We poll briefly to find it after session starts
+        let attempts = 0;
+        const poll = setInterval(() => {
+          attempts++;
+          const session = findXRSession(mv);
+          if (session) {
+            xrSessionRef.current = session;
+            clearInterval(poll);
+          }
+          if (attempts > 20) clearInterval(poll);
+        }, 200);
       }
-      if (status === 'not-presenting') setScreen('ar-ended');
+      if (status === 'not-presenting') {
+        setScreen('ar-ended');
+        xrSessionRef.current = null;
+        // Clean up any blocker
+        if (selectBlocker.current && xrSessionRef.current) {
+          xrSessionRef.current.removeEventListener(
+            'select',
+            selectBlocker.current,
+          );
+          selectBlocker.current = null;
+        }
+      }
       if (status === 'failed') setScreen('ready');
     }
     mv.addEventListener('load', onLoad);
@@ -134,36 +162,33 @@ export default function ARPage() {
     mv.activateAR?.();
   }, []);
 
-  // Lock: intercept touch events on the model-viewer canvas so taps don't reposition
-  // Unlock: remove the interceptor
-  const touchBlocker = useRef<((e: Event) => void) | null>(null);
-
   const toggleLock = useCallback(() => {
     const next = !lockedRef.current;
     lockedRef.current = next;
     setLocked(next);
 
-    const mv = mvRef.current;
-    if (!mv) return;
+    const session = xrSessionRef.current;
+    if (!session) return;
 
     if (next) {
-      // Block all touch/pointer events that would trigger hit-test repositioning
+      // The XRSession fires a 'select' event when user taps to reposition.
+      // Blocking it prevents model-viewer from moving the model.
       const blocker = (e: Event) => {
-        e.stopPropagation();
-        e.preventDefault();
+        e.stopImmediatePropagation();
       };
-      touchBlocker.current = blocker;
-      mv.addEventListener('touchstart', blocker, { capture: true });
-      mv.addEventListener('pointerdown', blocker, { capture: true });
+      selectBlocker.current = blocker;
+      // Add at capture phase with highest priority
+      session.addEventListener('select', blocker, { capture: true });
+      session.addEventListener('selectstart', blocker, { capture: true });
     } else {
-      if (touchBlocker.current) {
-        mv.removeEventListener('touchstart', touchBlocker.current, {
+      if (selectBlocker.current) {
+        session.removeEventListener('select', selectBlocker.current, {
           capture: true,
-        } as any);
-        mv.removeEventListener('pointerdown', touchBlocker.current, {
+        });
+        session.removeEventListener('selectstart', selectBlocker.current, {
           capture: true,
-        } as any);
-        touchBlocker.current = null;
+        });
+        selectBlocker.current = null;
       }
     }
   }, []);
@@ -232,7 +257,7 @@ export default function ARPage() {
         <div slot='ar-button' style={{ display: 'none' }} />
       </MV>
 
-      {/* DOM Overlay — registered with WebXR, renders over camera feed */}
+      {/* DOM Overlay */}
       <div
         ref={overlayRef}
         style={{
@@ -263,8 +288,7 @@ export default function ARPage() {
               gap: 7,
               padding: '8px 16px',
               borderRadius: 100,
-              // NO backdropFilter — kills performance on mobile
-              background: locked ? 'rgba(60,45,0,0.85)' : 'rgba(0,0,0,0.75)',
+              background: locked ? 'rgba(60,45,0,0.9)' : 'rgba(0,0,0,0.8)',
               border: `1px solid ${locked ? 'rgba(255,200,0,0.6)' : 'rgba(255,255,255,0.2)'}`,
             }}
           >
@@ -279,7 +303,7 @@ export default function ARPage() {
             />
             <span
               style={{
-                color: 'rgba(255,255,255,0.8)',
+                color: 'rgba(255,255,255,0.85)',
                 fontSize: 12,
                 fontFamily: 'monospace',
               }}
@@ -291,12 +315,12 @@ export default function ARPage() {
           </div>
         </div>
 
-        {/* Bottom toolbar — NO backdropFilter anywhere */}
+        {/* Bottom toolbar */}
         <div
           style={{
             padding: '20px 24px 50px',
             background:
-              'linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.4) 65%, transparent)',
+              'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 65%, transparent)',
             pointerEvents: 'all',
             display: 'flex',
             flexDirection: 'column',
@@ -386,7 +410,7 @@ export default function ARPage() {
             </button>
           </div>
 
-          {/* Rotate + Lock row */}
+          {/* Rotate + Lock */}
           <div
             style={{
               display: 'flex',
@@ -418,7 +442,6 @@ export default function ARPage() {
               <span style={lblStyle}>↺ Left</span>
             </button>
 
-            {/* Lock button */}
             <button
               onTouchEnd={(e) => {
                 e.stopPropagation();
@@ -431,7 +454,6 @@ export default function ARPage() {
                 borderRadius: 20,
                 flexShrink: 0,
                 border: `2px solid ${locked ? '#ffc800' : 'rgba(255,255,255,0.3)'}`,
-                // Solid background — no blur
                 background: locked
                   ? 'rgba(80,55,0,0.95)'
                   : 'rgba(15,15,15,0.95)',
@@ -445,9 +467,8 @@ export default function ARPage() {
                 WebkitTapHighlightColor: 'transparent',
                 boxShadow: locked
                   ? '0 0 16px rgba(255,200,0,0.4)'
-                  : '0 2px 12px rgba(0,0,0,0.6)',
-                transition:
-                  'background 0.2s, border-color 0.2s, box-shadow 0.2s',
+                  : '0 2px 12px rgba(0,0,0,0.5)',
+                transition: 'background 0.2s, border-color 0.2s',
               }}
             >
               {locked ? (
@@ -811,7 +832,32 @@ export default function ARPage() {
   );
 }
 
-// No backdropFilter on any of these
+// Find the XRSession buried in model-viewer's internal state
+function findXRSession(mv: any): any {
+  // model-viewer keeps the session at different paths depending on version
+  // Try common known paths
+  try {
+    if (mv._renderer?.xrSession) return mv._renderer.xrSession;
+    if (mv.xrSession) return mv.xrSession;
+    // Walk own properties looking for XRSession
+    for (const key of Object.getOwnPropertyNames(mv)) {
+      const val = mv[key];
+      if (
+        val &&
+        typeof val === 'object' &&
+        typeof val.addEventListener === 'function' &&
+        'inputSources' in val
+      ) {
+        return val; // This looks like an XRSession
+      }
+    }
+    // Check shadow root / internal elements
+    const internal = (mv as any)._internals || (mv as any).__internals;
+    if (internal?.xrSession) return internal.xrSession;
+  } catch {}
+  return null;
+}
+
 const smBtn: React.CSSProperties = {
   width: 36,
   height: 36,
@@ -906,8 +952,7 @@ function ARButton({
         fontFamily: 'system-ui, sans-serif',
         cursor: 'pointer',
         WebkitTapHighlightColor: 'transparent',
-        boxShadow:
-          '0 0 32px rgba(0,255,136,0.12), inset 0 1px 0 rgba(255,255,255,0.08)',
+        boxShadow: '0 0 32px rgba(0,255,136,0.12)',
         transition: 'transform 0.12s',
       }}
       onTouchStart={(e) => {
