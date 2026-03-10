@@ -237,10 +237,7 @@ export default function ARPage() {
         ar-scale='auto'
         ar-placement='floor'
         camera-controls
-        auto-rotate={!locked ? true : undefined}
-        disable-pan={locked ? true : undefined}
-        disable-tap={locked ? true : undefined}
-        disable-zoom={locked ? true : undefined}
+        auto-rotate
         rotation-per-second='20deg'
         shadow-intensity='1'
         shadow-softness='0.8'
@@ -273,9 +270,30 @@ export default function ARPage() {
           pointerEvents: 'none',
         }}
       >
+        {/* Blocker for pan/zoom/rotate */}
+        {locked && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'all',
+              zIndex: 0,
+            }}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerMove={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+          />
+        )}
+
         {/* Top status */}
         <div
           style={{
+            position: 'relative',
+            zIndex: 1,
             padding: '50px 20px 16px',
             display: 'flex',
             justifyContent: 'center',
@@ -321,6 +339,8 @@ export default function ARPage() {
         {/* Bottom toolbar */}
         <div
           style={{
+            position: 'relative',
+            zIndex: 1,
             padding: '20px 24px 50px',
             background:
               'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 65%, transparent)',
