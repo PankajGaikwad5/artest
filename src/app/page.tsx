@@ -13,20 +13,14 @@ type Screen =
 
 async function detectARMode(): Promise<ARMode> {
   const ua = navigator.userAgent;
+  // Native Scene Viewer gives the same anchored AR behavior users expect from Amazon.
+  if (/Android/.test(ua)) return 'scene-viewer';
+
   if (/iPhone|iPad|iPod/.test(ua)) {
     const a = document.createElement('a');
     if (a.relList?.supports?.('ar')) return 'quick-look';
     const m = ua.match(/OS (\d+)_/);
     return m && parseInt(m[1]) >= 12 ? 'quick-look' : 'none';
-  }
-  if (/Android/.test(ua)) {
-    if ((navigator as any).xr) {
-      try {
-        if (await (navigator as any).xr.isSessionSupported('immersive-ar'))
-          return 'webxr';
-      } catch {}
-    }
-    return 'scene-viewer';
   }
   if ((navigator as any).xr) {
     try {
@@ -188,12 +182,20 @@ export default function ARPage() {
   }, []);
 
   const modeLabel: Record<ARMode, string> = {
-    webxr: 'WebXR Augmented Reality',
-    'scene-viewer': 'Not supported',
-    'quick-look': 'Not supported',
+    webxr: 'WebXR Browser AR',
+    'scene-viewer': 'Google Scene Viewer AR',
+    'quick-look': 'Apple Quick Look AR',
     none: 'Not supported',
     checking: 'Detecting AR Support…',
   };
+  const arModesAttr =
+    arMode === 'scene-viewer'
+      ? 'scene-viewer'
+      : arMode === 'quick-look'
+        ? 'quick-look'
+        : arMode === 'webxr'
+          ? 'webxr'
+          : 'scene-viewer webxr quick-look';
 
   const MV = 'model-viewer' as any;
 
@@ -211,7 +213,7 @@ export default function ARPage() {
         src='/model.glb'
         alt='AR Model'
         ar
-        ar-modes='webxr'
+        ar-modes={arModesAttr}
         ar-scale='fixed'
         ar-placement='floor'
         camera-controls
@@ -676,7 +678,11 @@ export default function ARPage() {
             >
               {arMode === 'webxr'
                 ? 'Camera access required to place model'
-                : 'Your device must support WebXR for this AR experience.'}
+                : arMode === 'scene-viewer'
+                  ? 'Opens Google Scene Viewer for stable world AR.'
+                  : arMode === 'quick-look'
+                    ? 'Opens Apple Quick Look for native AR.'
+                    : 'AR is not available on this device.'}
             </p>
             <ARButton onClick={activateAR} />
             <p
