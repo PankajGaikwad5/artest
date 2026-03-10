@@ -11,6 +11,11 @@ type Screen =
   | 'unsupported'
   | 'error';
 
+const DEFAULT_MODEL_SCALE = 0.05;
+const MIN_MODEL_SCALE = 0.02;
+const MAX_MODEL_SCALE = 1.2;
+const SCALE_STEP = 0.02;
+
 async function detectARMode(): Promise<ARMode> {
   const ua = navigator.userAgent;
   // Native Scene Viewer gives the same anchored AR behavior users expect from Amazon.
@@ -41,9 +46,9 @@ export default function ARPage() {
   const [isPlaced, setIsPlaced] = useState(false);
   const [locked, setLocked] = useState(false);
   const lockedRef = useRef(false);
-  const [scale, setScale] = useState(1);
+  const [scale, setScale] = useState(DEFAULT_MODEL_SCALE);
   const [rotation, setRotation] = useState(0);
-  const scaleRef = useRef(1);
+  const scaleRef = useRef(DEFAULT_MODEL_SCALE);
   const rotationRef = useRef(0);
 
   useEffect(() => {
@@ -101,10 +106,14 @@ export default function ARPage() {
         setIsPlaced(false);
         setLocked(false);
         lockedRef.current = false;
-        setScale(1);
-        scaleRef.current = 1;
         setRotation(0);
         rotationRef.current = 0;
+        const activeScale = scaleRef.current;
+        setScale(activeScale);
+        (mv as any).setAttribute(
+          'scale',
+          `${activeScale} ${activeScale} ${activeScale}`,
+        );
         (mv as any).removeAttribute('disable-tap');
       }
       if (status === 'object-placed') {
@@ -166,11 +175,15 @@ export default function ARPage() {
   }, []);
 
   const changeScale = useCallback((delta: number) => {
-    const next = Math.min(3, Math.max(0.2, scaleRef.current + delta));
-    scaleRef.current = next;
-    setScale(next);
+    const next = Math.min(
+      MAX_MODEL_SCALE,
+      Math.max(MIN_MODEL_SCALE, scaleRef.current + delta),
+    );
+    const rounded = Number(next.toFixed(3));
+    scaleRef.current = rounded;
+    setScale(rounded);
     const mv = mvRef.current as any;
-    if (mv) mv.setAttribute('scale', `${next} ${next} ${next}`);
+    if (mv) mv.setAttribute('scale', `${rounded} ${rounded} ${rounded}`);
   }, []);
 
   const changeRotation = useCallback((delta: number) => {
@@ -216,6 +229,7 @@ export default function ARPage() {
         ar-modes={arModesAttr}
         ar-scale='fixed'
         ar-placement='floor'
+        scale={`${DEFAULT_MODEL_SCALE} ${DEFAULT_MODEL_SCALE} ${DEFAULT_MODEL_SCALE}`}
         camera-controls
         shadow-intensity='1'
         shadow-softness='0.8'
@@ -330,10 +344,10 @@ export default function ARPage() {
               }}
             >
               {locked
-                ? 'Locked · move phone to orbit'
+                ? 'Locked - move phone to view from any side'
                 : isPlaced
-                  ? 'Placed · drag to move'
-                  : 'Tap surface to anchor model'}
+                  ? 'Placed - use controls below if needed'
+                  : 'Tap once to place the bracelet'}
             </span>
           </div>
         </div>
@@ -379,9 +393,9 @@ export default function ARPage() {
             <button
               onTouchEnd={(e) => {
                 e.stopPropagation();
-                changeScale(-0.15);
+                changeScale(-SCALE_STEP);
               }}
-              onClick={() => changeScale(-0.15)}
+              onClick={() => changeScale(-SCALE_STEP)}
               style={smBtn}
             >
               <svg
@@ -407,7 +421,15 @@ export default function ARPage() {
               <div
                 style={{
                   height: '100%',
-                  width: `${((scale - 0.2) / 2.8) * 100}%`,
+                  width: `${Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      ((scale - MIN_MODEL_SCALE) /
+                        (MAX_MODEL_SCALE - MIN_MODEL_SCALE)) *
+                        100,
+                    ),
+                  )}%`,
                   background: '#00ff88',
                   borderRadius: 4,
                   transition: 'width 0.1s',
@@ -417,9 +439,9 @@ export default function ARPage() {
             <button
               onTouchEnd={(e) => {
                 e.stopPropagation();
-                changeScale(0.15);
+                changeScale(SCALE_STEP);
               }}
-              onClick={() => changeScale(0.15)}
+              onClick={() => changeScale(SCALE_STEP)}
               style={smBtn}
             >
               <svg
@@ -669,21 +691,111 @@ export default function ARPage() {
             <p
               style={{
                 color: 'rgba(255,255,255,0.35)',
-                fontSize: 11,
-                fontFamily: 'monospace',
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
+                fontSize: 12,
+                fontFamily: 'system-ui, sans-serif',
                 marginBottom: 14,
+                textAlign: 'center',
+                maxWidth: 360,
               }}
             >
               {arMode === 'webxr'
-                ? 'Camera access required to place model'
+                ? 'Tap AR, then tap once to place the bracelet.'
                 : arMode === 'scene-viewer'
-                  ? 'Opens Google Scene Viewer for stable world AR.'
+                  ? 'Tap AR to open Google Scene Viewer, then place the bracelet.'
                   : arMode === 'quick-look'
-                    ? 'Opens Apple Quick Look for native AR.'
+                    ? 'Tap AR to open Apple Quick Look, then place the bracelet.'
                     : 'AR is not available on this device.'}
             </p>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                maxWidth: 320,
+                marginBottom: 16,
+              }}
+            >
+              <span
+                style={{
+                  color: 'rgba(255,255,255,0.45)',
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  width: 72,
+                  flexShrink: 0,
+                }}
+              >
+                Size
+              </span>
+              <button
+                onTouchEnd={(e) => {
+                  e.stopPropagation();
+                  changeScale(-SCALE_STEP);
+                }}
+                onClick={() => changeScale(-SCALE_STEP)}
+                style={smBtn}
+              >
+                <svg
+                  width='14'
+                  height='14'
+                  viewBox='0 0 24 24'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='3'
+                >
+                  <line x1='5' y1='12' x2='19' y2='12' />
+                </svg>
+              </button>
+              <div
+                style={{
+                  flex: 1,
+                  height: 4,
+                  background: 'rgba(255,255,255,0.15)',
+                  borderRadius: 4,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${Math.max(
+                      0,
+                      Math.min(
+                        100,
+                        ((scale - MIN_MODEL_SCALE) /
+                          (MAX_MODEL_SCALE - MIN_MODEL_SCALE)) *
+                          100,
+                      ),
+                    )}%`,
+                    background: '#00ff88',
+                    borderRadius: 4,
+                    transition: 'width 0.1s',
+                  }}
+                />
+              </div>
+              <button
+                onTouchEnd={(e) => {
+                  e.stopPropagation();
+                  changeScale(SCALE_STEP);
+                }}
+                onClick={() => changeScale(SCALE_STEP)}
+                style={smBtn}
+              >
+                <svg
+                  width='14'
+                  height='14'
+                  viewBox='0 0 24 24'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='3'
+                >
+                  <line x1='12' y1='5' x2='12' y2='19' />
+                  <line x1='5' y1='12' x2='19' y2='12' />
+                </svg>
+              </button>
+            </div>
             <ARButton onClick={activateAR} />
             <p
               style={{
@@ -691,9 +803,11 @@ export default function ARPage() {
                 fontSize: 11,
                 fontFamily: 'monospace',
                 marginTop: 10,
+                textAlign: 'center',
               }}
             >
-              Point your camera at a flat surface to place the object
+              If the bracelet still looks too big or too small, adjust Size and
+              open AR again.
             </p>
           </div>
         </div>
