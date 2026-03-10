@@ -39,6 +39,7 @@ async function detectARMode(): Promise<ARMode> {
 
 export default function ARPage() {
   const mvRef = useRef<HTMLElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const [screen, setScreen] = useState<Screen>('loading');
   const [arMode, setArMode] = useState<ARMode>('checking');
   const arModeRef = useRef<ARMode>('checking');
@@ -47,6 +48,8 @@ export default function ARPage() {
   const lockedRef = useRef(false);
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
+  const scaleRef = useRef(1);
+  const rotationRef = useRef(0);
 
   useEffect(() => {
     detectARMode().then((mode) => {
@@ -89,11 +92,11 @@ export default function ARPage() {
         setLocked(false);
         lockedRef.current = false;
         setScale(1);
+        scaleRef.current = 1;
         setRotation(0);
+        rotationRef.current = 0;
       }
-      if (status === 'not-presenting') {
-        setScreen('ar-ended');
-      }
+      if (status === 'not-presenting') setScreen('ar-ended');
       if (status === 'failed') setScreen('ready');
     }
     mv.addEventListener('load', onLoad);
@@ -107,17 +110,50 @@ export default function ARPage() {
     };
   }, []);
 
-  const activateAR = useCallback(() => {
+  // Activate AR — use WebXR DOM Overlay API so our div renders over the camera
+  const activateAR = useCallback(async () => {
     const mv = mvRef.current as any;
-    mv?.activateAR?.();
+    const overlay = overlayRef.current;
+    if (!mv || !overlay) return;
+
+    const xr = (navigator as any).xr;
+
+    // For WebXR (Android): request session with domOverlay so our UI shows
+    if (arModeRef.current === 'webxr' && xr) {
+      try {
+        // Check if domOverlay is supported
+        const supported = await xr.isSessionSupported('immersive-ar');
+        if (supported) {
+          // Tell model-viewer to start AR — it will use WebXR internally
+          // We ALSO need to intercept and add domOverlay
+          // The trick: override the session request before calling activateAR
+          const origRequestSession = xr.requestSession.bind(xr);
+          xr.requestSession = async (mode: string, options: any = {}) => {
+            // Inject domOverlay into whatever options model-viewer passes
+            const overlayOptions = {
+              ...options,
+              domOverlay: { root: overlay },
+              optionalFeatures: [
+                ...(options.optionalFeatures || []),
+                'dom-overlay',
+              ],
+            };
+            xr.requestSession = origRequestSession; // restore immediately
+            return origRequestSession(mode, overlayOptions);
+          };
+        }
+      } catch (e) {
+        // domOverlay not supported, fall through to normal activateAR
+      }
+    }
+
+    mv.activateAR?.();
   }, []);
 
   const toggleLock = useCallback(() => {
     const next = !lockedRef.current;
     lockedRef.current = next;
     setLocked(next);
-    // When locked: remove ar-placement so model-viewer stops updating hit-test
-    // When unlocked: restore it so tapping repositions the model
     const mv = mvRef.current as any;
     if (!mv) return;
     if (next) {
@@ -128,21 +164,19 @@ export default function ARPage() {
   }, []);
 
   const changeScale = useCallback((delta: number) => {
-    setScale((prev) => {
-      const next = Math.min(3, Math.max(0.2, prev + delta));
-      const mv = mvRef.current as any;
-      if (mv) mv.setAttribute('scale', `${next} ${next} ${next}`);
-      return next;
-    });
+    const next = Math.min(3, Math.max(0.2, scaleRef.current + delta));
+    scaleRef.current = next;
+    setScale(next);
+    const mv = mvRef.current as any;
+    if (mv) mv.setAttribute('scale', `${next} ${next} ${next}`);
   }, []);
 
   const changeRotation = useCallback((delta: number) => {
-    setRotation((prev) => {
-      const next = prev + delta;
-      const mv = mvRef.current as any;
-      if (mv) mv.setAttribute('orientation', `0deg ${next}deg 0deg`);
-      return next;
-    });
+    const next = rotationRef.current + delta;
+    rotationRef.current = next;
+    setRotation(next);
+    const mv = mvRef.current as any;
+    if (mv) mv.setAttribute('orientation', `0deg ${next}deg 0deg`);
   }, []);
 
   const modeLabel: Record<ARMode, string> = {
@@ -187,21 +221,282 @@ export default function ARPage() {
           inset: 0,
           width: '100%',
           height: '100%',
-          // NEVER hide model-viewer — it must stay visible, AR compositor needs it
-          opacity: 1,
-          transition: 'opacity 0.3s',
-          pointerEvents:
-            screen === 'ready' ||
-            screen === 'ar-ended' ||
-            screen === 'ar-active'
-              ? 'auto'
-              : 'none',
           '--poster-color': '#080808',
         }}
       >
-        {/* Hide model-viewer's own AR button — we use ours */}
         <div slot='ar-button' style={{ display: 'none' }} />
       </MV>
+
+      {/*
+        THIS is the DOM Overlay root — registered with WebXR before session starts.
+        The browser compositor renders this div directly over the camera feed.
+        It's always in the DOM but only visible during AR.
+      */}
+      <div
+        ref={overlayRef}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+          pointerEvents: screen === 'ar-active' ? 'none' : 'none',
+          display: screen === 'ar-active' ? 'flex' : 'none',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+        }}
+      >
+        {/* Top bar */}
+        <div
+          style={{
+            padding: '52px 20px 16px',
+            display: 'flex',
+            justifyContent: 'center',
+            background:
+              'linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent)',
+            pointerEvents: 'none',
+          }}
+        >
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '8px 18px',
+              borderRadius: 100,
+              background: 'rgba(0,0,0,0.55)',
+              border: `1px solid ${locked ? 'rgba(255,200,0,0.5)' : 'rgba(255,255,255,0.2)'}`,
+              backdropFilter: 'blur(12px)',
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background: locked ? '#ffc800' : '#00ff88',
+                display: 'inline-block',
+                animation: 'breathe 2s ease-in-out infinite',
+              }}
+            />
+            <span
+              style={{
+                color: 'rgba(255,255,255,0.75)',
+                fontSize: 12,
+                fontFamily: 'monospace',
+              }}
+            >
+              {locked
+                ? 'Locked · move phone to orbit'
+                : 'Tap surface · move phone to orbit'}
+            </span>
+          </div>
+        </div>
+
+        {/* Bottom controls */}
+        <div
+          style={{
+            padding: '20px 24px 52px',
+            background:
+              'linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.3) 70%, transparent)',
+            pointerEvents: 'all',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 14,
+          }}
+        >
+          {/* Scale row */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              width: '100%',
+              maxWidth: 300,
+            }}
+          >
+            <span
+              style={{
+                color: 'rgba(255,255,255,0.4)',
+                fontSize: 10,
+                fontFamily: 'monospace',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                width: 36,
+              }}
+            >
+              Size
+            </span>
+            <button
+              onTouchEnd={() => changeScale(-0.15)}
+              onClick={() => changeScale(-0.15)}
+              style={smBtnStyle}
+            >
+              <svg
+                width='14'
+                height='14'
+                viewBox='0 0 24 24'
+                fill='none'
+                stroke='currentColor'
+                strokeWidth='3'
+              >
+                <line x1='5' y1='12' x2='19' y2='12' />
+              </svg>
+            </button>
+            <div
+              style={{
+                flex: 1,
+                height: 4,
+                background: 'rgba(255,255,255,0.12)',
+                borderRadius: 4,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${((scale - 0.2) / 2.8) * 100}%`,
+                  background: 'linear-gradient(to right, #00ff88, #00aaff)',
+                  borderRadius: 4,
+                  transition: 'width 0.1s',
+                }}
+              />
+            </div>
+            <button
+              onTouchEnd={() => changeScale(0.15)}
+              onClick={() => changeScale(0.15)}
+              style={smBtnStyle}
+            >
+              <svg
+                width='14'
+                height='14'
+                viewBox='0 0 24 24'
+                fill='none'
+                stroke='currentColor'
+                strokeWidth='3'
+              >
+                <line x1='12' y1='5' x2='12' y2='19' />
+                <line x1='5' y1='12' x2='19' y2='12' />
+              </svg>
+            </button>
+          </div>
+
+          {/* Main button row */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 12,
+              width: '100%',
+              maxWidth: 300,
+            }}
+          >
+            {/* Rotate CCW */}
+            <button
+              onTouchEnd={() => changeRotation(-45)}
+              onClick={() => changeRotation(-45)}
+              style={toolBtnStyle}
+            >
+              <svg
+                width='22'
+                height='22'
+                viewBox='0 0 24 24'
+                fill='none'
+                stroke='currentColor'
+                strokeWidth='2'
+              >
+                <path d='M2.5 2v6h6M2.66 15.57a10 10 0 1 0 .57-8.38' />
+              </svg>
+              <span style={btnLabelStyle}>Rotate</span>
+            </button>
+
+            {/* Lock — big center button */}
+            <button
+              onTouchEnd={toggleLock}
+              onClick={toggleLock}
+              style={{
+                width: 76,
+                height: 76,
+                borderRadius: 22,
+                flexShrink: 0,
+                border: `2px solid ${locked ? '#ffc800' : 'rgba(255,255,255,0.3)'}`,
+                background: locked
+                  ? 'rgba(255,200,0,0.25)'
+                  : 'rgba(20,20,20,0.7)',
+                backdropFilter: 'blur(20px)',
+                color: locked ? '#ffc800' : '#fff',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                cursor: 'pointer',
+                WebkitTapHighlightColor: 'transparent',
+                boxShadow: locked
+                  ? '0 0 20px rgba(255,200,0,0.3)'
+                  : '0 4px 20px rgba(0,0,0,0.4)',
+                transition: 'all 0.2s',
+              }}
+            >
+              {locked ? (
+                <svg
+                  width='24'
+                  height='24'
+                  viewBox='0 0 24 24'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2'
+                >
+                  <rect x='3' y='11' width='18' height='11' rx='2' />
+                  <path d='M7 11V7a5 5 0 0 1 10 0v4' />
+                </svg>
+              ) : (
+                <svg
+                  width='24'
+                  height='24'
+                  viewBox='0 0 24 24'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2'
+                >
+                  <rect x='3' y='11' width='18' height='11' rx='2' />
+                  <path d='M7 11V7a5 5 0 0 1 9.9-1' />
+                </svg>
+              )}
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  fontFamily: 'system-ui',
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {locked ? 'Unlock' : 'Lock'}
+              </span>
+            </button>
+
+            {/* Rotate CW */}
+            <button
+              onTouchEnd={() => changeRotation(45)}
+              onClick={() => changeRotation(45)}
+              style={toolBtnStyle}
+            >
+              <svg
+                width='22'
+                height='22'
+                viewBox='0 0 24 24'
+                fill='none'
+                stroke='currentColor'
+                strokeWidth='2'
+              >
+                <path d='M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38' />
+              </svg>
+              <span style={btnLabelStyle}>Rotate</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* ── LOADING ── */}
       {screen === 'loading' && (
@@ -338,260 +633,6 @@ export default function ARPage() {
             >
               Point your camera at a flat surface to place the object
             </p>
-          </div>
-        </div>
-      )}
-
-      {/* ── AR ACTIVE — fixed overlay over camera feed ── */}
-      {screen === 'ar-active' && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            pointerEvents: 'none', // container is pass-through
-          }}
-        >
-          {/* Top hint */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              padding: '52px 20px 20px',
-              display: 'flex',
-              justifyContent: 'center',
-              background:
-                'linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent)',
-              pointerEvents: 'none',
-            }}
-          >
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 7,
-                padding: '7px 16px',
-                borderRadius: 100,
-                background: 'rgba(0,0,0,0.5)',
-                border: `1px solid ${locked ? 'rgba(255,200,0,0.5)' : 'rgba(255,255,255,0.15)'}`,
-                backdropFilter: 'blur(12px)',
-              }}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: locked ? '#ffc800' : '#00ff88',
-                  display: 'inline-block',
-                  animation: 'breathe 2s ease-in-out infinite',
-                }}
-              />
-              <span
-                style={{
-                  color: 'rgba(255,255,255,0.7)',
-                  fontSize: 11,
-                  fontFamily: 'monospace',
-                }}
-              >
-                {locked
-                  ? 'Locked · move phone to orbit'
-                  : 'Tap surface to place · move phone to orbit'}
-              </span>
-            </div>
-          </div>
-
-          {/* Bottom toolbar */}
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              padding: '24px 20px 48px',
-              background:
-                'linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 60%, transparent)',
-              pointerEvents: 'all',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 16,
-            }}
-          >
-            {/* Scale slider row */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                width: '100%',
-                maxWidth: 320,
-              }}
-            >
-              <span
-                style={{
-                  color: 'rgba(255,255,255,0.4)',
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  width: 40,
-                  textAlign: 'right',
-                }}
-              >
-                SIZE
-              </span>
-              <button onClick={() => changeScale(-0.1)} style={iconBtnStyle}>
-                <svg
-                  width='16'
-                  height='16'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2.5'
-                >
-                  <line x1='5' y1='12' x2='19' y2='12' />
-                </svg>
-              </button>
-              {/* Visual scale bar */}
-              <div
-                style={{
-                  flex: 1,
-                  height: 3,
-                  background: 'rgba(255,255,255,0.1)',
-                  borderRadius: 2,
-                  position: 'relative',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    height: '100%',
-                    width: `${((scale - 0.2) / 2.8) * 100}%`,
-                    background: '#00ff88',
-                    borderRadius: 2,
-                    transition: 'width 0.15s',
-                  }}
-                />
-              </div>
-              <button onClick={() => changeScale(0.1)} style={iconBtnStyle}>
-                <svg
-                  width='16'
-                  height='16'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2.5'
-                >
-                  <line x1='12' y1='5' x2='12' y2='19' />
-                  <line x1='5' y1='12' x2='19' y2='12' />
-                </svg>
-              </button>
-            </div>
-
-            {/* Main controls row */}
-            <div
-              style={{
-                display: 'flex',
-                gap: 10,
-                alignItems: 'center',
-                width: '100%',
-                maxWidth: 320,
-                justifyContent: 'center',
-              }}
-            >
-              {/* Rotate left */}
-              <ToolButton onClick={() => changeRotation(-45)} label='↺ Rotate'>
-                <svg
-                  width='20'
-                  height='20'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2'
-                >
-                  <path d='M2.5 2v6h6M2.66 15.57a10 10 0 1 0 .57-8.38' />
-                </svg>
-              </ToolButton>
-
-              {/* Lock / Unlock — center, bigger */}
-              <button
-                onClick={toggleLock}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 5,
-                  width: 72,
-                  height: 72,
-                  borderRadius: 20,
-                  border: `2px solid ${locked ? 'rgba(255,200,0,0.6)' : 'rgba(255,255,255,0.25)'}`,
-                  background: locked
-                    ? 'rgba(255,200,0,0.2)'
-                    : 'rgba(0,0,0,0.6)',
-                  backdropFilter: 'blur(20px)',
-                  color: locked ? '#ffc800' : 'rgba(255,255,255,0.9)',
-                  cursor: 'pointer',
-                  WebkitTapHighlightColor: 'transparent',
-                  transition: 'all 0.2s',
-                  flexShrink: 0,
-                }}
-              >
-                {locked ? (
-                  <svg
-                    width='22'
-                    height='22'
-                    viewBox='0 0 24 24'
-                    fill='none'
-                    stroke='currentColor'
-                    strokeWidth='2'
-                  >
-                    <rect x='3' y='11' width='18' height='11' rx='2' />
-                    <path d='M7 11V7a5 5 0 0 1 10 0v4' />
-                  </svg>
-                ) : (
-                  <svg
-                    width='22'
-                    height='22'
-                    viewBox='0 0 24 24'
-                    fill='none'
-                    stroke='currentColor'
-                    strokeWidth='2'
-                  >
-                    <rect x='3' y='11' width='18' height='11' rx='2' />
-                    <path d='M7 11V7a5 5 0 0 1 9.9-1' />
-                  </svg>
-                )}
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontFamily: 'system-ui',
-                    fontWeight: 700,
-                    letterSpacing: '0.05em',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  {locked ? 'Unlock' : 'Lock'}
-                </span>
-              </button>
-
-              {/* Rotate right */}
-              <ToolButton onClick={() => changeRotation(45)} label='Rotate ↻'>
-                <svg
-                  width='20'
-                  height='20'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2'
-                >
-                  <path d='M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38' />
-                </svg>
-              </ToolButton>
-            </div>
           </div>
         </div>
       )}
@@ -757,16 +798,15 @@ export default function ARPage() {
   );
 }
 
-// ── Shared icon button style for scale controls ────────────────────────────
-const iconBtnStyle: React.CSSProperties = {
+const smBtnStyle: React.CSSProperties = {
   width: 36,
   height: 36,
   borderRadius: 10,
   flexShrink: 0,
-  border: '1px solid rgba(255,255,255,0.15)',
-  background: 'rgba(0,0,0,0.55)',
+  border: '1px solid rgba(255,255,255,0.18)',
+  background: 'rgba(0,0,0,0.6)',
   backdropFilter: 'blur(12px)',
-  color: 'rgba(255,255,255,0.8)',
+  color: '#fff',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -774,50 +814,30 @@ const iconBtnStyle: React.CSSProperties = {
   WebkitTapHighlightColor: 'transparent',
 };
 
-function ToolButton({
-  onClick,
-  label,
-  children,
-}: {
-  onClick: () => void;
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 5,
-        padding: '12px 0',
-        flex: 1,
-        maxWidth: 80,
-        borderRadius: 16,
-        border: '1px solid rgba(255,255,255,0.15)',
-        background: 'rgba(0,0,0,0.55)',
-        backdropFilter: 'blur(16px)',
-        color: 'rgba(255,255,255,0.8)',
-        cursor: 'pointer',
-        WebkitTapHighlightColor: 'transparent',
-      }}
-    >
-      {children}
-      <span
-        style={{
-          fontSize: 9,
-          fontFamily: 'system-ui',
-          fontWeight: 600,
-          letterSpacing: '0.04em',
-          textTransform: 'uppercase',
-        }}
-      >
-        {label}
-      </span>
-    </button>
-  );
-}
+const toolBtnStyle: React.CSSProperties = {
+  flex: 1,
+  maxWidth: 80,
+  padding: '12px 8px',
+  borderRadius: 16,
+  border: '1px solid rgba(255,255,255,0.18)',
+  background: 'rgba(0,0,0,0.6)',
+  backdropFilter: 'blur(16px)',
+  color: '#fff',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: 5,
+  cursor: 'pointer',
+  WebkitTapHighlightColor: 'transparent',
+};
+
+const btnLabelStyle: React.CSSProperties = {
+  fontSize: 9,
+  fontFamily: 'system-ui',
+  fontWeight: 700,
+  letterSpacing: '0.05em',
+  textTransform: 'uppercase',
+};
 
 function Spinner() {
   return (
