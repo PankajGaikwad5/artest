@@ -215,11 +215,11 @@ export default function ARPage() {
   }, []);
 
   const modeLabel: Record<ARMode, string> = {
-    webxr: 'WebXR · ARCore',
-    'scene-viewer': 'Scene Viewer',
-    'quick-look': 'AR Quick Look',
+    webxr: 'WebXR Augmented Reality',
+    'scene-viewer': 'Not supported',
+    'quick-look': 'Not supported',
     none: 'Not supported',
-    checking: 'Detecting…',
+    checking: 'Detecting AR Support…',
   };
 
   const MV = 'model-viewer' as any;
@@ -238,7 +238,7 @@ export default function ARPage() {
         src='/model.glb'
         alt='AR Model'
         ar
-        ar-modes='webxr scene-viewer quick-look'
+        ar-modes='webxr'
         ar-scale='auto'
         ar-placement='floor'
         camera-controls
@@ -680,11 +680,9 @@ export default function ARPage() {
                 marginBottom: 14,
               }}
             >
-              {arMode === 'quick-look'
-                ? 'Opens Apple AR Quick Look'
-                : arMode === 'scene-viewer'
-                  ? 'Opens native Android AR'
-                  : 'Camera permission required'}
+              {arMode === 'webxr'
+                ? 'Camera access required to place model'
+                : 'Your device must support WebXR for this AR experience.'}
             </p>
             <ARButton onClick={activateAR} />
             <p
