@@ -110,56 +110,61 @@ export default function ARPage() {
     };
   }, []);
 
-  // Activate AR — use WebXR DOM Overlay API so our div renders over the camera
   const activateAR = useCallback(async () => {
     const mv = mvRef.current as any;
     const overlay = overlayRef.current;
     if (!mv || !overlay) return;
-
     const xr = (navigator as any).xr;
-
-    // For WebXR (Android): request session with domOverlay so our UI shows
     if (arModeRef.current === 'webxr' && xr) {
       try {
-        // Check if domOverlay is supported
-        const supported = await xr.isSessionSupported('immersive-ar');
-        if (supported) {
-          // Tell model-viewer to start AR — it will use WebXR internally
-          // We ALSO need to intercept and add domOverlay
-          // The trick: override the session request before calling activateAR
-          const origRequestSession = xr.requestSession.bind(xr);
-          xr.requestSession = async (mode: string, options: any = {}) => {
-            // Inject domOverlay into whatever options model-viewer passes
-            const overlayOptions = {
-              ...options,
-              domOverlay: { root: overlay },
-              optionalFeatures: [
-                ...(options.optionalFeatures || []),
-                'dom-overlay',
-              ],
-            };
-            xr.requestSession = origRequestSession; // restore immediately
-            return origRequestSession(mode, overlayOptions);
-          };
-        }
-      } catch (e) {
-        // domOverlay not supported, fall through to normal activateAR
-      }
+        const origRequestSession = xr.requestSession.bind(xr);
+        xr.requestSession = async (mode: string, options: any = {}) => {
+          xr.requestSession = origRequestSession;
+          return origRequestSession(mode, {
+            ...options,
+            domOverlay: { root: overlay },
+            optionalFeatures: [
+              ...(options.optionalFeatures || []),
+              'dom-overlay',
+            ],
+          });
+        };
+      } catch {}
     }
-
     mv.activateAR?.();
   }, []);
+
+  // Lock: intercept touch events on the model-viewer canvas so taps don't reposition
+  // Unlock: remove the interceptor
+  const touchBlocker = useRef<((e: Event) => void) | null>(null);
 
   const toggleLock = useCallback(() => {
     const next = !lockedRef.current;
     lockedRef.current = next;
     setLocked(next);
-    const mv = mvRef.current as any;
+
+    const mv = mvRef.current;
     if (!mv) return;
+
     if (next) {
-      mv.removeAttribute('ar-placement');
+      // Block all touch/pointer events that would trigger hit-test repositioning
+      const blocker = (e: Event) => {
+        e.stopPropagation();
+        e.preventDefault();
+      };
+      touchBlocker.current = blocker;
+      mv.addEventListener('touchstart', blocker, { capture: true });
+      mv.addEventListener('pointerdown', blocker, { capture: true });
     } else {
-      mv.setAttribute('ar-placement', 'floor');
+      if (touchBlocker.current) {
+        mv.removeEventListener('touchstart', touchBlocker.current, {
+          capture: true,
+        } as any);
+        mv.removeEventListener('pointerdown', touchBlocker.current, {
+          capture: true,
+        } as any);
+        touchBlocker.current = null;
+      }
     }
   }, []);
 
@@ -227,31 +232,27 @@ export default function ARPage() {
         <div slot='ar-button' style={{ display: 'none' }} />
       </MV>
 
-      {/*
-        THIS is the DOM Overlay root — registered with WebXR before session starts.
-        The browser compositor renders this div directly over the camera feed.
-        It's always in the DOM but only visible during AR.
-      */}
+      {/* DOM Overlay — registered with WebXR, renders over camera feed */}
       <div
         ref={overlayRef}
         style={{
           position: 'fixed',
           inset: 0,
           zIndex: 9999,
-          pointerEvents: screen === 'ar-active' ? 'none' : 'none',
           display: screen === 'ar-active' ? 'flex' : 'none',
           flexDirection: 'column',
           justifyContent: 'space-between',
+          pointerEvents: 'none',
         }}
       >
-        {/* Top bar */}
+        {/* Top status */}
         <div
           style={{
-            padding: '52px 20px 16px',
+            padding: '50px 20px 16px',
             display: 'flex',
             justifyContent: 'center',
             background:
-              'linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent)',
+              'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, transparent)',
             pointerEvents: 'none',
           }}
         >
@@ -260,11 +261,11 @@ export default function ARPage() {
               display: 'inline-flex',
               alignItems: 'center',
               gap: 7,
-              padding: '8px 18px',
+              padding: '8px 16px',
               borderRadius: 100,
-              background: 'rgba(0,0,0,0.55)',
-              border: `1px solid ${locked ? 'rgba(255,200,0,0.5)' : 'rgba(255,255,255,0.2)'}`,
-              backdropFilter: 'blur(12px)',
+              // NO backdropFilter — kills performance on mobile
+              background: locked ? 'rgba(60,45,0,0.85)' : 'rgba(0,0,0,0.75)',
+              border: `1px solid ${locked ? 'rgba(255,200,0,0.6)' : 'rgba(255,255,255,0.2)'}`,
             }}
           >
             <span
@@ -274,12 +275,11 @@ export default function ARPage() {
                 borderRadius: '50%',
                 background: locked ? '#ffc800' : '#00ff88',
                 display: 'inline-block',
-                animation: 'breathe 2s ease-in-out infinite',
               }}
             />
             <span
               style={{
-                color: 'rgba(255,255,255,0.75)',
+                color: 'rgba(255,255,255,0.8)',
                 fontSize: 12,
                 fontFamily: 'monospace',
               }}
@@ -291,12 +291,12 @@ export default function ARPage() {
           </div>
         </div>
 
-        {/* Bottom controls */}
+        {/* Bottom toolbar — NO backdropFilter anywhere */}
         <div
           style={{
-            padding: '20px 24px 52px',
+            padding: '20px 24px 50px',
             background:
-              'linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.3) 70%, transparent)',
+              'linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.4) 65%, transparent)',
             pointerEvents: 'all',
             display: 'flex',
             flexDirection: 'column',
@@ -316,20 +316,23 @@ export default function ARPage() {
           >
             <span
               style={{
-                color: 'rgba(255,255,255,0.4)',
+                color: 'rgba(255,255,255,0.45)',
                 fontSize: 10,
                 fontFamily: 'monospace',
                 textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                width: 36,
+                letterSpacing: '0.1em',
+                width: 34,
               }}
             >
               Size
             </span>
             <button
-              onTouchEnd={() => changeScale(-0.15)}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                changeScale(-0.15);
+              }}
               onClick={() => changeScale(-0.15)}
-              style={smBtnStyle}
+              style={smBtn}
             >
               <svg
                 width='14'
@@ -346,7 +349,7 @@ export default function ARPage() {
               style={{
                 flex: 1,
                 height: 4,
-                background: 'rgba(255,255,255,0.12)',
+                background: 'rgba(255,255,255,0.15)',
                 borderRadius: 4,
                 overflow: 'hidden',
               }}
@@ -355,16 +358,19 @@ export default function ARPage() {
                 style={{
                   height: '100%',
                   width: `${((scale - 0.2) / 2.8) * 100}%`,
-                  background: 'linear-gradient(to right, #00ff88, #00aaff)',
+                  background: '#00ff88',
                   borderRadius: 4,
                   transition: 'width 0.1s',
                 }}
               />
             </div>
             <button
-              onTouchEnd={() => changeScale(0.15)}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                changeScale(0.15);
+              }}
               onClick={() => changeScale(0.15)}
-              style={smBtnStyle}
+              style={smBtn}
             >
               <svg
                 width='14'
@@ -380,7 +386,7 @@ export default function ARPage() {
             </button>
           </div>
 
-          {/* Main button row */}
+          {/* Rotate + Lock row */}
           <div
             style={{
               display: 'flex',
@@ -391,11 +397,13 @@ export default function ARPage() {
               maxWidth: 300,
             }}
           >
-            {/* Rotate CCW */}
             <button
-              onTouchEnd={() => changeRotation(-45)}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                changeRotation(-45);
+              }}
               onClick={() => changeRotation(-45)}
-              style={toolBtnStyle}
+              style={toolBtn}
             >
               <svg
                 width='22'
@@ -407,23 +415,26 @@ export default function ARPage() {
               >
                 <path d='M2.5 2v6h6M2.66 15.57a10 10 0 1 0 .57-8.38' />
               </svg>
-              <span style={btnLabelStyle}>Rotate</span>
+              <span style={lblStyle}>↺ Left</span>
             </button>
 
-            {/* Lock — big center button */}
+            {/* Lock button */}
             <button
-              onTouchEnd={toggleLock}
-              onClick={toggleLock}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                toggleLock();
+              }}
+              onClick={() => toggleLock()}
               style={{
-                width: 76,
-                height: 76,
-                borderRadius: 22,
+                width: 74,
+                height: 74,
+                borderRadius: 20,
                 flexShrink: 0,
                 border: `2px solid ${locked ? '#ffc800' : 'rgba(255,255,255,0.3)'}`,
+                // Solid background — no blur
                 background: locked
-                  ? 'rgba(255,200,0,0.25)'
-                  : 'rgba(20,20,20,0.7)',
-                backdropFilter: 'blur(20px)',
+                  ? 'rgba(80,55,0,0.95)'
+                  : 'rgba(15,15,15,0.95)',
                 color: locked ? '#ffc800' : '#fff',
                 display: 'flex',
                 flexDirection: 'column',
@@ -433,15 +444,16 @@ export default function ARPage() {
                 cursor: 'pointer',
                 WebkitTapHighlightColor: 'transparent',
                 boxShadow: locked
-                  ? '0 0 20px rgba(255,200,0,0.3)'
-                  : '0 4px 20px rgba(0,0,0,0.4)',
-                transition: 'all 0.2s',
+                  ? '0 0 16px rgba(255,200,0,0.4)'
+                  : '0 2px 12px rgba(0,0,0,0.6)',
+                transition:
+                  'background 0.2s, border-color 0.2s, box-shadow 0.2s',
               }}
             >
               {locked ? (
                 <svg
-                  width='24'
-                  height='24'
+                  width='26'
+                  height='26'
                   viewBox='0 0 24 24'
                   fill='none'
                   stroke='currentColor'
@@ -452,8 +464,8 @@ export default function ARPage() {
                 </svg>
               ) : (
                 <svg
-                  width='24'
-                  height='24'
+                  width='26'
+                  height='26'
                   viewBox='0 0 24 24'
                   fill='none'
                   stroke='currentColor'
@@ -468,7 +480,7 @@ export default function ARPage() {
                   fontSize: 10,
                   fontWeight: 700,
                   fontFamily: 'system-ui',
-                  letterSpacing: '0.05em',
+                  letterSpacing: '0.06em',
                   textTransform: 'uppercase',
                 }}
               >
@@ -476,11 +488,13 @@ export default function ARPage() {
               </span>
             </button>
 
-            {/* Rotate CW */}
             <button
-              onTouchEnd={() => changeRotation(45)}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                changeRotation(45);
+              }}
               onClick={() => changeRotation(45)}
-              style={toolBtnStyle}
+              style={toolBtn}
             >
               <svg
                 width='22'
@@ -492,7 +506,7 @@ export default function ARPage() {
               >
                 <path d='M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38' />
               </svg>
-              <span style={btnLabelStyle}>Rotate</span>
+              <span style={lblStyle}>Right ↻</span>
             </button>
           </div>
         </div>
@@ -567,7 +581,6 @@ export default function ARPage() {
                 background: 'rgba(0,0,0,0.65)',
                 border: '1px solid rgba(0,255,136,0.35)',
                 borderRadius: 100,
-                backdropFilter: 'blur(12px)',
               }}
             >
               <span
@@ -798,14 +811,14 @@ export default function ARPage() {
   );
 }
 
-const smBtnStyle: React.CSSProperties = {
+// No backdropFilter on any of these
+const smBtn: React.CSSProperties = {
   width: 36,
   height: 36,
   borderRadius: 10,
   flexShrink: 0,
-  border: '1px solid rgba(255,255,255,0.18)',
-  background: 'rgba(0,0,0,0.6)',
-  backdropFilter: 'blur(12px)',
+  border: '1px solid rgba(255,255,255,0.2)',
+  background: 'rgba(10,10,10,0.9)',
   color: '#fff',
   display: 'flex',
   alignItems: 'center',
@@ -814,14 +827,13 @@ const smBtnStyle: React.CSSProperties = {
   WebkitTapHighlightColor: 'transparent',
 };
 
-const toolBtnStyle: React.CSSProperties = {
+const toolBtn: React.CSSProperties = {
   flex: 1,
   maxWidth: 80,
   padding: '12px 8px',
   borderRadius: 16,
-  border: '1px solid rgba(255,255,255,0.18)',
-  background: 'rgba(0,0,0,0.6)',
-  backdropFilter: 'blur(16px)',
+  border: '1px solid rgba(255,255,255,0.2)',
+  background: 'rgba(10,10,10,0.9)',
   color: '#fff',
   display: 'flex',
   flexDirection: 'column',
@@ -831,7 +843,7 @@ const toolBtnStyle: React.CSSProperties = {
   WebkitTapHighlightColor: 'transparent',
 };
 
-const btnLabelStyle: React.CSSProperties = {
+const lblStyle: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'system-ui',
   fontWeight: 700,
@@ -888,7 +900,6 @@ function ARButton({
         border: '1.5px solid rgba(0,255,136,0.4)',
         background:
           'linear-gradient(135deg, rgba(0,255,136,0.14), rgba(0,160,255,0.08))',
-        backdropFilter: 'blur(20px)',
         color: '#fff',
         fontSize: 18,
         fontWeight: 700,
@@ -897,7 +908,7 @@ function ARButton({
         WebkitTapHighlightColor: 'transparent',
         boxShadow:
           '0 0 32px rgba(0,255,136,0.12), inset 0 1px 0 rgba(255,255,255,0.08)',
-        transition: 'transform 0.12s, box-shadow 0.2s',
+        transition: 'transform 0.12s',
       }}
       onTouchStart={(e) => {
         e.currentTarget.style.transform = 'scale(0.97)';
