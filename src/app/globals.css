@@ -2,9 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+/* @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap'); */
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
 :root {
   --white: #ffffff;
@@ -13,13 +19,14 @@
   --accent-blue: #00aaff;
   --danger: #ff4444;
   --bg: #0a0a0a;
-  --surface: rgba(255,255,255,0.06);
-  --border: rgba(255,255,255,0.12);
+  --surface: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.12);
   --text: #ffffff;
-  --text-dim: rgba(255,255,255,0.5);
+  --text-dim: rgba(255, 255, 255, 0.5);
 }
 
-html, body {
+html,
+body {
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -40,7 +47,7 @@ model-viewer {
   display: block;
   --poster-color: #0a0a0a;
   --progress-bar-color: #00ff88;
-  --progress-mask: rgba(0,0,0,0.8);
+  --progress-mask: rgba(0, 0, 0, 0.8);
 }
 
 /* Hide the default AR button — we have our own */
@@ -51,29 +58,82 @@ model-viewer::part(default-ar-button) {
 /* The AR session takes over the whole screen natively */
 
 @keyframes pulse-ring {
-  0% { transform: scale(0.8); opacity: 1; }
-  100% { transform: scale(2); opacity: 0; }
+  0% {
+    transform: scale(0.8);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
 }
 
 @keyframes scan {
-  0%, 100% { transform: translateY(0); opacity: 0.6; }
-  50% { transform: translateY(180px); opacity: 0; }
+
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+
+  50% {
+    transform: translateY(180px);
+    opacity: 0;
+  }
 }
 
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes spin-slow {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes breathe {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
+
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
-.fade-in { animation: fade-in 0.5s ease forwards; }
-.animate-breathe { animation: breathe 2s ease-in-out infinite; }
-.animate-spin-slow { animation: spin-slow 3s linear infinite; }
+.fade-in {
+  animation: fade-in 0.5s ease forwards;
+}
+
+.animate-breathe {
+  animation: breathe 2s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+@keyframes slide-up-fade {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-slide-up-fade {
+  animation: slide-up-fade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
